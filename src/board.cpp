@@ -12,7 +12,8 @@ PieceType fenCharToType(char c) {
         case 'k': return PieceType::King;
         case 'a': return PieceType::Advisor;
         case 'e': return PieceType::Elephant;
-        case 'h': return PieceType::Horse;
+        case 'h':
+        case 'n': return PieceType::Horse;
         case 'r': return PieceType::Rook;
         case 'c': return PieceType::Cannon;
         case 'p': return PieceType::Soldier;
@@ -35,14 +36,15 @@ char typeToFenChar(PieceType t, Color c) {
 }
 
 bool inPalace(int row, int col, Color c) {
-    // 九宫：红 0..2 行，黑 7..9 行，列 3..5
+    // 九宫：红方（下）7..9 行，黑方（上）0..2 行，列 3..5
     if (col < 3 || col > 5) return false;
-    if (c == Color::Red) return row >= 0 && row <= 2;
-    return row >= 7 && row <= 9;
+    if (c == Color::Red) return row >= 7 && row <= 9;
+    return row >= 0 && row <= 2;
 }
 
 bool crossRiver(int row, Color c) {
-    return c == Color::Red ? row > 4 : row < 5;
+    // 过河：红兵进入黑方区域（row<=4），黑兵进入红方区域（row>=5）
+    return c == Color::Red ? row < 5 : row > 4;
 }
 } // namespace
 

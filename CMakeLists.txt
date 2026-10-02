@@ -29,6 +29,18 @@ qt_add_qml_module(xiangqi-qt
 
 target_link_libraries(xiangqi-qt PRIVATE Qt6::Core Qt6::Gui Qt6::Qml Qt6::Quick)
 
+# 规则引擎单元测试（可选 target，CTest 集成）
+enable_testing()
+add_executable(test_rules
+    tests/test_rules.cpp
+    src/board.h
+    src/board.cpp
+    src/engine.h
+    src/engine.cpp
+)
+target_include_directories(test_rules PRIVATE src)
+add_test(NAME test_rules COMMAND test_rules)
+
 # 安装规则（Linux：/opt/xiangqi-qt 或 prefix 下 bin）
 install(TARGETS xiangqi-qt
     RUNTIME DESTINATION bin
