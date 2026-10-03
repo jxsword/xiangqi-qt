@@ -2,6 +2,7 @@
 #include "board.h"
 
 #include <algorithm>
+#include <cstdlib>
 
 namespace xiangqi {
 

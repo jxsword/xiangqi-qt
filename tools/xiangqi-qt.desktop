@@ -1,0 +1,10 @@
+[Desktop Entry]
+Name=中国象棋
+Name[en]=Xiangqi
+Comment=中国象棋（C++/QML）
+Comment[en]=Chinese Chess (C++/QML)
+Exec=xiangqi-qt
+Icon=xiangqi-qt
+Type=Application
+Categories=Game;BoardGame;
+Terminal=false

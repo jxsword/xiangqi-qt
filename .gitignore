@@ -28,3 +28,23 @@ Thumbs.db
 # Qt Creator
 *.user
 *.user.*
+
+# 构建目录与打包产物
+build/
+build-win/
+AppDir/
+debroot/
+win-dist/
+squashfs-root/
+*.exe
+*.deb
+*.AppImage
+*.o
+*.obj
+/installer.nsi
+
+# tools 下的下载型工具与压缩包（保留 .nsi/.png/.desktop）
+tools/linuxdeploy*
+tools/*.zip
+tools/*.tar.xz
+aqtinstall.log

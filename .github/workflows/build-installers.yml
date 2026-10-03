@@ -1,0 +1,167 @@
+name: build-installers
+
+# 中国象棋（Qt 6 / C++ QML）三平台构建
+# 产物：Linux AppImage+deb、Windows NSIS 安装包、macOS dmg
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+env:
+  QT_VERSION: '6.8.3'
+  APP_NAME: xiangqi-qt
+  APP_VERSION: '0.1.0'
+
+jobs:
+  # ============ Linux（deb + AppImage）============
+  linux:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安装构建依赖
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            ninja-build cmake build-essential python3-pip \
+            libgl1-mesa-dev libglu1-mesa-dev libxkbcommon-dev \
+            libfontconfig1-dev libfreetype6-dev libwayland-dev \
+            libxcb-cursor0 file
+
+      - name: 安装 Qt ${{ env.QT_VERSION }}（aqtinstall）
+        run: |
+          python3 -m pip install --upgrade pip aqtinstall
+          python3 -m aqt install-qt linux desktop ${QT_VERSION} linux_gcc_64 -O /opt/qt
+          echo "/opt/qt/${QT_VERSION}/gcc_64/bin" >> $GITHUB_PATH
+
+      - name: 配置与构建
+        run: |
+          cmake -S . -B build -GNinja -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_PREFIX_PATH=/opt/qt/${QT_VERSION}/gcc_64
+          cmake --build build
+          ctest --test-dir build --output-on-failure
+
+      - name: 下载 linuxdeploy
+        run: |
+          wget -q https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage -O linuxdeploy
+          wget -q https://github.com/linuxdeploy/linuxdeploy-plugin-qt/releases/download/continuous/linuxdeploy-plugin-qt-x86_64.AppImage -O linuxdeploy-plugin-qt
+          wget -q https://github.com/linuxdeploy/linuxdeploy-plugin-appimage/releases/download/continuous/linuxdeploy-plugin-appimage-x86_64.AppImage -O linuxdeploy-plugin-appimage
+          chmod +x linuxdeploy linuxdeploy-plugin-qt linuxdeploy-plugin-appimage
+
+      - name: 生成 AppImage
+        run: |
+          export QML_SOURCES_PATHS=$PWD/qml
+          export APPIMAGE_EXTRACT_AND_RUN=1
+          ./linuxdeploy --appdir AppDir --executable build/${APP_NAME} \
+            --desktop-file tools/${APP_NAME}.desktop --icon-file tools/${APP_NAME}.png --plugin qt
+          cp /opt/qt/${QT_VERSION}/gcc_64/plugins/platforms/libqoffscreen.so AppDir/usr/plugins/platforms/ || true
+          cp -r build/Xiangqi AppDir/usr/bin/
+          OUTPUT=${APP_NAME}_${APP_VERSION}_amd64.AppImage ./linuxdeploy-plugin-appimage --appdir AppDir
+
+      - name: 生成 deb
+        run: |
+          mkdir -p debroot/DEBIAN
+          cp -r AppDir/usr debroot/
+          SIZE=$(du -sk debroot/usr | cut -f1)
+          cat > debroot/DEBIAN/control <<EOF
+          Package: ${APP_NAME}
+          Version: ${APP_VERSION}
+          Section: games
+          Priority: optional
+          Architecture: amd64
+          Maintainer: Xiangqi Dev <dev@local>
+          Installed-Size: $SIZE
+          Depends: libc6 (>= 2.34), libxcb-cursor0
+          Description: 中国象棋（C++/QML 版）
+           Chinese Chess built with Qt 6 Quick/QML, rule engine + AI.
+          EOF
+          dpkg-deb --build debroot ${APP_NAME}_${APP_VERSION}_amd64.deb
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-installers
+          path: |
+            *.AppImage
+            *.deb
+
+  # ============ Windows（NSIS，原生 MSVC）============
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安装 Qt ${{ env.QT_VERSION }}（aqtinstall）
+        shell: bash
+        run: |
+          python -m pip install --upgrade pip aqtinstall
+          python -m aqt install-qt windows desktop ${QT_VERSION} win64_msvc2022_64 -O C:/qt
+
+      - name: 配置与构建（MSVC + Ninja）
+        shell: cmd
+        run: |
+          call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat"
+          cmake -S . -B build -GNinja -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH=C:/qt/${QT_VERSION}/msvc2022_64
+          cmake --build build
+
+      - name: 运行单元测试
+        shell: bash
+        run: |
+          ./build/test_rules.exe
+
+      - name: windeployqt 部署
+        shell: cmd
+        run: |
+          mkdir win-dist
+          copy build\xiangqi-qt.exe win-dist\
+          xcopy /e /i /y build\Xiangqi win-dist\Xiangqi
+          C:\qt\%QT_VERSION%\msvc2022_64\bin\windeployqt.exe --release --no-translations --dir win-dist win-dist\xiangqi-qt.exe
+
+      - name: 安装 NSIS 并打包
+        shell: bash
+        run: |
+          choco install nsis -y --no-progress
+          cp tools/installer.nsi ./installer.nsi
+          "/c/Program Files (x86)/NSIS/makensis.exe" installer.nsi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-installer
+          path: xiangqi-qt_${{ env.APP_VERSION }}_x64-setup.exe
+
+  # ============ macOS（dmg）============
+  macos:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安装 Qt ${{ env.QT_VERSION }}（aqtinstall）
+        run: |
+          python3 -m pip install --upgrade pip aqtinstall
+          python3 -m aqt install-qt mac desktop ${QT_VERSION} clang_64 -O /opt/qt
+
+      - name: 配置与构建
+        run: |
+          cmake -S . -B build -GNinja -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_PREFIX_PATH=/opt/qt/${QT_VERSION}/macos
+          cmake --build build
+          ctest --test-dir build --output-on-failure
+
+      - name: macdeployqt 部署
+        run: |
+          mkdir -p staging
+          cp -R build/xiangqi-qt.app staging/ 2>/dev/null || true
+          /opt/qt/${QT_VERSION}/macos/bin/macdeployqt build/xiangqi-qt.app \
+            -qmldir=$PWD/qml -always-overwrite
+          cp -R build/Xiangqi build/xiangqi-qt.app/Contents/MacOS/ || true
+
+      - name: 生成 dmg
+        run: |
+          mv build/xiangqi-qt.app "中国象棋.app"
+          hdiutil create -volname "中国象棋" -srcfolder "中国象棋.app" \
+            -ov -format UDZO xiangqi-qt_${APP_VERSION}_macos.dmg
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-dmg
+          path: *.dmg
