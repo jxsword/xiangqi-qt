@@ -73,6 +73,7 @@ jobs:
         run: |
           export QML_SOURCES_PATHS=$PWD/qml
           export APPIMAGE_EXTRACT_AND_RUN=1
+          export QMAKE=${{ env.QT_PREFIX }}/bin/qmake
           ./linuxdeploy --appdir AppDir --executable build/${APP_NAME} \
             --desktop-file tools/${APP_NAME}.desktop --icon-file tools/${APP_NAME}.png --plugin qt
           cp ${{ env.QT_PREFIX }}/plugins/platforms/libqoffscreen.so AppDir/usr/plugins/platforms/ || true
