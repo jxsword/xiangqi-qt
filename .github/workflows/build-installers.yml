@@ -56,8 +56,10 @@ jobs:
       - name: 单元测试 + 冒烟测试
         run: |
           ctest --test-dir build --output-on-failure
+          set +e
           QT_QPA_PLATFORM=offscreen QT_QUICK_BACKEND=software timeout 10 ./build/${APP_NAME}
           code=$?
+          set -e
           [ $code -eq 124 ] && echo "SMOKE_OK" || { echo "SMOKE_FAIL($code)"; exit 1; }
 
       - name: 下载 linuxdeploy
@@ -126,23 +128,26 @@ jobs:
           python -m pip install --upgrade pip aqtinstall
           python -m aqt install-qt windows desktop ${{ env.QT_VERSION }} ${{ env.QT_ARCH }} -O ${{ env.QT_DIR }}
 
-      - name: 配置与构建（Visual Studio 17 2022 生成器，免 vcvars）
+      - name: 配置与构建（MSVC + Ninja，vswhere 动态定位 vcvars）
         shell: bash
         run: |
-          cmake -S . -B build -G "Visual Studio 17 2022" -A x64 \
-            -DCMAKE_PREFIX_PATH=${{ env.QT_PREFIX }}
-          cmake --build build --config Release
+          VSWHERE="/c/Program Files (x86)/Microsoft Visual Studio/Installer/vswhere.exe"
+          VS_PATH=$("$VSWHERE" -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath)
+          echo "VS_PATH=$VS_PATH"
+          [ -z "$VS_PATH" ] && { echo "vswhere 未定位到 VS，失败"; exit 1; }
+          VCVARS="$VS_PATH/VC/Auxiliary/Build/vcvars64.bat"
+          cmd //c "call \"$VCVARS\" && cmake -S . -B build -GNinja -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH=${{ env.QT_PREFIX }} && cmake --build build"
 
       - name: 单元测试 + 冒烟测试
         shell: bash
         run: |
-          ctest --test-dir build -C Release --output-on-failure
+          ctest --test-dir build --output-on-failure
 
       - name: 冒烟测试（offscreen）
         shell: pwsh
         run: |
           $env:QT_QPA_PLATFORM = "offscreen"
-          $p = Start-Process -FilePath ".\build\Release\${env:APP_NAME}.exe" -PassThru
+          $p = Start-Process -FilePath ".\build\${env:APP_NAME}.exe" -PassThru
           Start-Sleep -Seconds 6
           if ($p.HasExited) {
             Write-Error "SMOKE_FAIL：进程提前退出，exit=$($p.ExitCode)"
@@ -155,7 +160,7 @@ jobs:
         shell: bash
         run: |
           mkdir -p win-dist
-          cp build/Release/${APP_NAME}.exe win-dist/
+          cp build/${APP_NAME}.exe win-dist/
           ${{ env.QT_PREFIX }}/bin/windeployqt.exe --release --no-translations --dir win-dist win-dist/${APP_NAME}.exe
 
       - name: 安装 NSIS 并打包

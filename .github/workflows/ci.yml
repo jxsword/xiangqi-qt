@@ -61,8 +61,10 @@ jobs:
 
       - name: 冒烟测试（offscreen + 软件渲染，正常运行至超时即通过）
         run: |
+          set +e
           QT_QPA_PLATFORM=offscreen QT_QUICK_BACKEND=software timeout 10 ./build/xiangqi-qt
           code=$?
+          set -e
           if [ $code -eq 124 ]; then
             echo "SMOKE_OK（程序正常运行至超时）"
           else
@@ -103,22 +105,25 @@ jobs:
           python -m pip install --upgrade pip aqtinstall
           python -m aqt install-qt windows desktop ${{ env.QT_VERSION }} ${{ env.QT_ARCH }} -O ${{ env.QT_DIR }}
 
-      - name: 配置与构建（Visual Studio 17 2022 生成器，免 vcvars）
+      - name: 配置与构建（MSVC + Ninja，vswhere 动态定位 vcvars）
         shell: bash
         run: |
-          cmake -S . -B build -G "Visual Studio 17 2022" -A x64 \
-            -DCMAKE_PREFIX_PATH=${{ env.QT_PREFIX }}
-          cmake --build build --config Release
+          VSWHERE="/c/Program Files (x86)/Microsoft Visual Studio/Installer/vswhere.exe"
+          VS_PATH=$("$VSWHERE" -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath)
+          echo "VS_PATH=$VS_PATH"
+          [ -z "$VS_PATH" ] && { echo "vswhere 未定位到 VS，失败"; exit 1; }
+          VCVARS="$VS_PATH/VC/Auxiliary/Build/vcvars64.bat"
+          cmd //c "call \"$VCVARS\" && cmake -S . -B build -GNinja -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH=${{ env.QT_PREFIX }} && cmake --build build"
 
       - name: 单元测试（CTest 规则测试）
         shell: bash
-        run: ctest --test-dir build -C Release --output-on-failure
+        run: ctest --test-dir build --output-on-failure
 
       - name: 冒烟测试（offscreen，进程存活即通过）
         shell: pwsh
         run: |
           $env:QT_QPA_PLATFORM = "offscreen"
-          $exe = ".\build\Release\xiangqi-qt.exe"
+          $exe = ".\build\xiangqi-qt.exe"
           $p = Start-Process -FilePath $exe -PassThru
           Start-Sleep -Seconds 6
           if ($p.HasExited) {
@@ -133,5 +138,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: windows-test-bin
-          path: build/Release/xiangqi-qt.exe
+          path: build/xiangqi-qt.exe
           retention-days: 1
