@@ -202,10 +202,10 @@ jobs:
       - name: 单元测试（CTest 规则测试）
         run: ctest --test-dir build --output-on-failure
 
-      - name: 冒烟测试（offscreen + 软件渲染，进程存活即通过）
+      - name: 冒烟测试（offscreen，进程存活即通过）
         run: |
           set +e
-          QT_QPA_PLATFORM=offscreen QT_QUICK_BACKEND=software ./build/xiangqi-qt &
+          QT_QPA_PLATFORM=offscreen ./build/xiangqi-qt &
           PID=$!
           sleep 10
           if kill -0 $PID 2>/dev/null; then
