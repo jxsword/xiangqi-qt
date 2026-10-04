@@ -167,7 +167,7 @@ jobs:
       - name: 安装 Qt（缓存未命中时才安装）
         if: steps.cache-qt.outputs.cache-hit != 'true'
         run: |
-          python3 -m pip install --user --upgrade pip aqtinstall
+          python3 -m pip install --break-system-packages --upgrade pip aqtinstall
           python3 -m aqt install-qt macos desktop ${{ env.QT_VERSION }} ${{ env.QT_ARCH }} -O ${{ env.QT_DIR }}
 
       - name: 配置与构建（Ninja）
