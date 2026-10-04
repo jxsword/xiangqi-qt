@@ -209,5 +209,5 @@ jobs:
           files: |
             release/linux/*
             release/windows/*
-          overwrite: true
+          overwrite_files: true
           generate_release_notes: true
