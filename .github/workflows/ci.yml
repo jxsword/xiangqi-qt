@@ -145,3 +145,62 @@ jobs:
           name: windows-test-bin
           path: build/xiangqi-qt.exe
           retention-days: 1
+
+  # ============ macOS 测试（macos-latest + aqt Qt 6.8.3 macos_arm64）============
+  macos-test:
+    name: macOS 测试（Qt 6.8.3）
+    runs-on: macos-latest
+    env:
+      QT_DIR: /Users/runner/qt
+      QT_ARCH: macos_arm64
+      QT_PREFIX: /Users/runner/qt/6.8.3/macos_arm64
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 缓存 Qt（命中则跳过安装，加速构建）
+        id: cache-qt
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.QT_DIR }}
+          key: ${{ runner.os }}-qt-${{ env.QT_VERSION }}-${{ env.QT_ARCH }}
+
+      - name: 安装 Qt（缓存未命中时才安装）
+        if: steps.cache-qt.outputs.cache-hit != 'true'
+        run: |
+          python3 -m pip install --upgrade pip aqtinstall
+          python3 -m aqt install-qt macos desktop ${{ env.QT_VERSION }} ${{ env.QT_ARCH }} -O ${{ env.QT_DIR }}
+
+      - name: 配置与构建（Ninja）
+        run: |
+          cmake -S . -B build -GNinja -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_PREFIX_PATH=${{ env.QT_PREFIX }}
+          cmake --build build
+
+      - name: 单元测试（CTest 规则测试）
+        run: ctest --test-dir build --output-on-failure
+
+      - name: 冒烟测试（offscreen + 软件渲染，进程存活即通过）
+        run: |
+          set +e
+          QT_QPA_PLATFORM=offscreen QT_QUICK_BACKEND=software ./build/xiangqi-qt &
+          PID=$!
+          sleep 10
+          if kill -0 $PID 2>/dev/null; then
+            kill $PID 2>/dev/null
+            echo "SMOKE_OK（程序正常运行 10 秒）"
+            set -e
+            exit 0
+          fi
+          wait $PID
+          CODE=$?
+          echo "SMOKE_FAIL（exit=$CODE）"
+          set -e
+          exit 1
+
+      - name: 上传测试产物（可选，调试用）
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-test-bin
+          path: build/xiangqi-qt
+          retention-days: 1
