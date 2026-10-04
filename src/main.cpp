@@ -2,6 +2,7 @@
 #include <QGuiApplication>
 #include <QQmlApplicationEngine>
 #include <QtQml/qqml.h>
+#include <QUrl>
 
 #include "gamecontroller.h"
 
@@ -15,7 +16,10 @@ int main(int argc, char* argv[]) {
     qmlRegisterType<GameController>("Xiangqi", 1, 0, "GameController");
 
     QQmlApplicationEngine engine;
-    engine.loadFromModule("Xiangqi", "Main");
+    // 直接加载资源内的 Main.qml（qmlcache 已命中 /qml/Main.qml 的 AOT 缓存）；
+    // 不依赖 loadFromModule 的 qmldir 类型注册（Windows 交叉版该机制不可靠）。
+    // Main.qml 内 import Xiangqi 1.0 所需类型已由上方 qmlRegisterType 注册。
+    engine.load(QUrl(QStringLiteral("qrc:/qml/Main.qml")));
     if (engine.rootObjects().isEmpty()) return -1;
 
     return app.exec();

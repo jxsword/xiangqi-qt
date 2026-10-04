@@ -9,7 +9,7 @@ find_package(Qt6 REQUIRED COMPONENTS Core Gui Qml Quick)
 
 qt_standard_project_setup()
 
-qt_add_executable(xiangqi-qt
+qt_add_executable(xiangqi-qt WIN32
     src/main.cpp
     src/board.h
     src/board.cpp
@@ -28,6 +28,8 @@ qt_add_qml_module(xiangqi-qt
 )
 
 target_link_libraries(xiangqi-qt PRIVATE Qt6::Core Qt6::Gui Qt6::Qml Qt6::Quick)
+# Windows GUI 子系统（qt_add_executable 的 WIN32 参数）下，Qt6::Core 会自动链接
+# Qt6::EntryPointPrivate（qtmain: WinMain -> main），无需手动链接，消除控制台黑框
 
 # 规则引擎单元测试（可选 target，CTest 集成）
 enable_testing()
