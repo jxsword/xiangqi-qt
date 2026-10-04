@@ -172,6 +172,14 @@ jobs:
 
       - name: 配置与构建（Ninja）
         run: |
+          echo "== QT_DIR 顶层 =="
+          ls -la ${{ env.QT_DIR }} || true
+          echo "== 6.8.3 目录 =="
+          ls -la ${{ env.QT_DIR }}/6.8.3 || true
+          echo "== 查找 Qt6Config.cmake =="
+          find ${{ env.QT_DIR }} -name "Qt6Config.cmake" 2>/dev/null | head -5
+          echo "== 查找 qmake =="
+          find ${{ env.QT_DIR }} -name "qmake" 2>/dev/null | head -5
           cmake -S . -B build -GNinja -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_PREFIX_PATH=${{ env.QT_PREFIX }}
           cmake --build build
