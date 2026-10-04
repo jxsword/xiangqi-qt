@@ -3,6 +3,7 @@ name: build-installers
 # 中国象棋（Qt 6 / C++ QML）发布构建
 # 产物：Linux AppImage + deb、Windows NSIS 安装包（macOS 后续版本再补）
 # 触发：打 v* tag 或手动触发；Qt 安装目录缓存加速（与 ci.yml 共享 key，可复用）
+# 发布：tag 触发时自动把构建产物上传到对应 GitHub Release（softprops/action-gh-release）
 on:
   push:
     tags:
@@ -180,3 +181,33 @@ jobs:
         with:
           name: windows-installer
           path: xiangqi-qt_${{ env.APP_VERSION }}_x64-setup.exe
+
+  # ============ 发布到 GitHub Release（仅 tag 触发时执行）============
+  release:
+    needs: [linux, windows]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: linux-installers
+          path: release/linux
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: windows-installer
+          path: release/windows
+
+      - name: 列出待发布产物
+        run: ls -lh release/linux release/windows
+
+      - name: 上传到 GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            release/linux/*
+            release/windows/*
+          overwrite: true
+          generate_release_notes: true
