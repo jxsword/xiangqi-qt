@@ -152,8 +152,8 @@ jobs:
     runs-on: macos-latest
     env:
       QT_DIR: /Users/runner/qt
-      QT_ARCH: macos_arm64
-      QT_PREFIX: /Users/runner/qt/6.8.3/macos_arm64
+      QT_ARCH: clang_64
+      QT_PREFIX: /Users/runner/qt/6.8.3/clang_64
     steps:
       - uses: actions/checkout@v4
 
