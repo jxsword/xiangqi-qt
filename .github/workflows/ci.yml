@@ -193,6 +193,7 @@ jobs:
           ln -sfn Versions/Current/AGL AGL
           ls -la "$AGL" "$AGL/Versions"
           echo "AGL_STUB_READY: $AGL"
+          cd "$GITHUB_WORKSPACE"
           cmake -S . -B build -GNinja -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_PREFIX_PATH=${{ env.QT_PREFIX }} \
             -DCMAKE_EXE_LINKER_FLAGS="-F$HOME/agl"
