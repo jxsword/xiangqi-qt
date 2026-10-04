@@ -205,27 +205,20 @@ jobs:
       - name: 冒烟测试（offscreen，进程存活即通过）
         run: |
           set +e
-          QT_QPA_PLATFORM=offscreen ./build/xiangqi-qt &
-          PID=$!
-          sleep 10
-          if kill -0 $PID 2>/dev/null; then
-            kill $PID 2>/dev/null
-            echo "SMOKE_OK（程序正常运行 10 秒）"
-            set -e
+          perl -e 'alarm 15; exec @ARGV' env QT_QPA_PLATFORM=offscreen ./build/xiangqi-qt
+          code=$?
+          set -e
+          if [ $code -eq 142 ]; then
+            echo "SMOKE_OK（程序存活至 15 秒 alarm）"
             exit 0
           fi
-          wait $PID
-          CODE=$?
-          echo "SMOKE_FAIL（exit=$CODE）"
-          echo "== 崩溃报告（.ips 前 3 个） =="
-          ls -t ~/Library/Logs/DiagnosticReports/xiangqi-qt*.ips 2>/dev/null | head -3 || echo "无崩溃报告"
-          REP=$(ls -t ~/Library/Logs/DiagnosticReports/xiangqi-qt*.ips 2>/dev/null | head -1)
-          if [ -n "$REP" ]; then
-            python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print("signal:",d.get("exception",{}).get("signal"),"name:",d.get("exception",{}).get("name")); imgs=d.get("usedImages",[]); [print(" ",(imgs[f["imageIndex"]].get("name","?") if f.get("imageIndex") is not None and f["imageIndex"]<len(imgs) else "?"),f.get("symbol",""),"+",f.get("imageOffset",0)) for t0 in d.get("threads",[]) if t0.get("triggered") for f in t0.get("frames",[])[:20]]' "$REP" || echo "解析失败，直接输出前 3000 字节："
-            head -c 3000 "$REP" || true
-            echo
-          fi
+          echo "SMOKE_FAIL（exit=$code）"
+          echo "== lldb 崩溃栈 =="
+          set +e
+          perl -e 'alarm 30; exec @ARGV' env QT_QPA_PLATFORM=offscreen lldb -b -o run -o "thread backtrace all" -o quit -- ./build/xiangqi-qt > /tmp/lldb_out.txt 2>&1
+          echo "lldb exit=$?"
           set -e
+          tail -100 /tmp/lldb_out.txt
           exit 1
 
       - name: 上传测试产物（可选，调试用）
