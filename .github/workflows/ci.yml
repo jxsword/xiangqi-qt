@@ -188,8 +188,10 @@ jobs:
           printf 'int _agl_stub_dummy = 1;\n' > /tmp/agl_stub.c
           cc -dynamiclib -Wl,-install_name,@rpath/AGL.framework/Versions/A/AGL \
             -o "$AGL/Versions/A/AGL" /tmp/agl_stub.c
-          ln -sfn AGL "$AGL/Versions/Current"
-          ln -sfn Versions/Current/AGL "$AGL/AGL"
+          cd "$AGL"
+          ln -sfn A Versions/Current
+          ln -sfn Versions/Current/AGL AGL
+          ls -la "$AGL" "$AGL/Versions"
           echo "AGL_STUB_READY: $AGL"
           cmake -S . -B build -GNinja -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_PREFIX_PATH=${{ env.QT_PREFIX }} \
