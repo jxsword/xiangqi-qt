@@ -217,6 +217,26 @@ jobs:
           wait $PID
           CODE=$?
           echo "SMOKE_FAIL（exit=$CODE）"
+          echo "== 崩溃报告（.ips 前 3 个） =="
+          ls -t ~/Library/Logs/DiagnosticReports/xiangqi-qt*.ips 2>/dev/null | head -3 || echo "无崩溃报告"
+          REP=$(ls -t ~/Library/Logs/DiagnosticReports/xiangqi-qt*.ips 2>/dev/null | head -1)
+          if [ -n "$REP" ]; then
+            python3 - "$REP" <<'PYEOF'
+import json, sys
+p = sys.argv[1]
+try:
+    d = json.load(open(p))
+    print("signal:", d.get("exception", {}).get("signal"), "| name:", d.get("exception", {}).get("name"))
+    imgs = d.get("usedImages", [])
+    for t0 in d.get("threads", []):
+        if t0.get("triggered"):
+            for f in t0.get("frames", [])[:20]:
+                img = imgs[f["imageIndex"]] if f.get("imageIndex") is not None and f["imageIndex"] < len(imgs) else {}
+                print(" ", img.get("name", "?"), f.get("symbol", ""), "+", f.get("imageOffset", 0))
+except Exception as e:
+    print("parse fail:", e)
+PYEOF
+          fi
           set -e
           exit 1
 
