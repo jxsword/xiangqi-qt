@@ -116,6 +116,19 @@ Windows 侧：**解压 zip → 双击 `xiangqi-qt.exe`**（免安装；运行时
 - **正式构建产物**：必须携带全部 Qt DLL、QML 模块、平台插件与 `qt.conf`，否则在目标机器上会闪退（缺 `Qt6OpenGL.dll` 等）或无法加载 QML（缺 `qml/` 模块）；
 - Windows 发布前用 `file` 检查子系统应为 `GUI`（非 `console`），否则双击会先弹控制台黑框。
 
+## GitHub Actions 持续集成
+
+仓库内置两个 workflow（`.github/workflows/`），push / PR / tag 自动触发：
+
+| workflow | 触发 | 内容 | 产物 |
+| --- | --- | --- | --- |
+| `ci` | push master、PR、手动 | Ubuntu 24.04 与 Windows 上 aqtinstall 安装 Qt 6.8.3（`actions/cache` 缓存，命中后跳过安装）→ 构建 → CTest 规则测试 → offscreen 冒烟测试 | `linux-test-bin` / `windows-test-bin`（裸二进制，调试用） |
+| `build-installers` | 打 `v*` tag、手动 | 先跑测试 → Linux 用 linuxdeploy 打包 AppImage + deb；Windows 用 windeployqt + NSIS 打包安装程序 | `linux-installers`（AppImage + deb）、`windows-installer`（NSIS .exe） |
+
+- 两 workflow 的 Qt 缓存 key 相同（`<runner.os>-qt-6.8.3-<arch>`），缓存互通，Linux / Windows 各约 1.1 GB，命中后跳过 Qt 安装，构建时间从 5+ 分钟降到 1~2 分钟。
+- Windows runner 使用 `ilammy/msvc-dev-cmd` 激活 MSVC 环境 + Ninja 构建（自动适配 VS 2022 / 2026，无需硬编码 vcvars 路径）。
+- 手动触发：GitHub Actions 页面 → 对应 workflow → `Run workflow`；发布构建需打 tag：`git tag v0.1.0 && git push origin v0.1.0`。
+
 ## 目录结构
 
 ```
