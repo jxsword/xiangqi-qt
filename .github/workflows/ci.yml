@@ -146,7 +146,7 @@ jobs:
           path: build/xiangqi-qt.exe
           retention-days: 1
 
-  # ============ macOS 测试（macos-latest + aqt Qt 6.8.3 macos_arm64）============
+  # ============ macOS 测试（macos-15 + aqt Qt 6.8.3 clang_64）============
   macos-test:
     name: macOS 测试（Qt 6.8.3）
     runs-on: macos-15
