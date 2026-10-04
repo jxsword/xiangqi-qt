@@ -128,15 +128,15 @@ jobs:
           python -m pip install --upgrade pip aqtinstall
           python -m aqt install-qt windows desktop ${{ env.QT_VERSION }} ${{ env.QT_ARCH }} -O ${{ env.QT_DIR }}
 
-      - name: 配置与构建（MSVC + Ninja，vswhere 动态定位 vcvars）
+      - name: 激活 MSVC 环境（自动定位 VS，兼容 2022/2026）
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: 配置与构建（Ninja + MSVC）
         shell: bash
         run: |
-          VSWHERE="/c/Program Files (x86)/Microsoft Visual Studio/Installer/vswhere.exe"
-          VS_PATH=$("$VSWHERE" -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath)
-          echo "VS_PATH=$VS_PATH"
-          [ -z "$VS_PATH" ] && { echo "vswhere 未定位到 VS，失败"; exit 1; }
-          VCVARS="$VS_PATH/VC/Auxiliary/Build/vcvars64.bat"
-          cmd //c "call \"$VCVARS\" && cmake -S . -B build -GNinja -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH=${{ env.QT_PREFIX }} && cmake --build build"
+          cmake -S . -B build -GNinja -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_PREFIX_PATH=${{ env.QT_PREFIX }}
+          cmake --build build
 
       - name: 单元测试 + 冒烟测试
         shell: bash
