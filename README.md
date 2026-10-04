@@ -122,7 +122,7 @@ Windows 侧：**解压 zip → 双击 `xiangqi-qt.exe`**（免安装；运行时
 
 | workflow | 触发 | 内容 | 产物 |
 | --- | --- | --- | --- |
-| `ci` | push master、PR、手动 | Ubuntu 24.04 与 Windows 上 aqtinstall 安装 Qt 6.8.3（`actions/cache` 缓存，命中后跳过安装）→ 构建 → CTest 规则测试 → offscreen 冒烟测试 | `linux-test-bin` / `windows-test-bin`（裸二进制，调试用） |
+| `ci` | push master、PR、手动 | Ubuntu 24.04 / Windows / macOS 上 aqtinstall 安装 Qt 6.8.3（`actions/cache` 缓存，命中后跳过安装）→ 构建 → CTest 规则测试 → offscreen 冒烟测试（macOS 无头 runner 因 Qt Cocoa 初始化限制记 SKIP，见 ci.yml 内注释） | `linux-test-bin` / `windows-test-bin` / `macos-test-bin`（裸二进制，调试用） |
 | `build-installers` | 打 `v*` tag、手动 | 先跑测试 → Linux 用 linuxdeploy 打包 AppImage + deb；Windows 用 windeployqt + NSIS 打包安装程序 | `linux-installers`（AppImage + deb）、`windows-installer`（NSIS .exe） |
 
 - 两 workflow 的 Qt 缓存 key 相同（`<runner.os>-qt-6.8.3-<arch>`），缓存互通，Linux / Windows 各约 1.1 GB，命中后跳过 Qt 安装，构建时间从 5+ 分钟降到 1~2 分钟。
