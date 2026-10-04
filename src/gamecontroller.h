@@ -13,6 +13,7 @@ class GameController : public QObject {
     Q_PROPERTY(QString statusText READ statusText NOTIFY stateChanged)
     Q_PROPERTY(bool gameOver READ isGameOver NOTIFY stateChanged)
     Q_PROPERTY(QString modeName READ modeName NOTIFY modeChanged)
+    Q_PROPERTY(int version READ stateVersion NOTIFY stateChanged)
 
 public:
     enum class Mode { HumanVsHuman, HumanVsAI };
@@ -24,6 +25,7 @@ public:
     QString statusText() const { return status_; }
     bool isGameOver() const { return gameOver_; }
     QString modeName() const { return mode_ == Mode::HumanVsAI ? QStringLiteral("人机对战（黑方为 AI）") : QStringLiteral("双人对战"); }
+    int stateVersion() const { return stateVersion_; }
 
     Q_INVOKABLE QString pieceAt(int row, int col) const; // 返回棋子显示字符，空为 ""
     Q_INVOKABLE bool isSelected(int row, int col) const;
@@ -40,6 +42,7 @@ signals:
 
 private:
     void refreshStatus();
+    void notifyState();    // 递增 version 并发出 stateChanged
     void tryAiMove();      // 人机模式下 AI 走子
     void doMove(const xiangqi::Move& m);
     QString pieceDisplay(int row, int col) const;
@@ -49,9 +52,11 @@ private:
     Mode mode_ = Mode::HumanVsHuman;
     bool gameOver_ = false;
     QString status_;
-    xiangqi::Move selected_{};
+    int selRow_ = -1;   // 当前选中棋子行（-1 表示无选中）
+    int selCol_ = -1;   // 当前选中棋子列
     std::vector<xiangqi::Move> legalTargets_;
     int aiDepth_ = 3;
+    int stateVersion_ = 0;   // 状态版本号，供 QML 绑定刷新
     // 简单悔棋：仅记录最近一步
     struct History { xiangqi::Move move; xiangqi::Piece captured; };
     std::vector<History> history_;

@@ -1,21 +1,30 @@
 import QtQuick
 import QtQuick.Controls
+import Xiangqi 1.0
 
 Window {
     id: root
     width: 960
-    height: 740
+    height: 800
     visible: true
     title: qsTr("中国象棋")
     color: "#2e221a"
     minimumWidth: 820
-    minimumHeight: 660
+    minimumHeight: 786
+
+    // 由 QML 直接创建的单例控制器（无注入时序问题）
+    GameController {
+        id: controller
+    }
 
     property int cell: 64
     property int boardW: 9 * cell
     property int boardH: 10 * cell
-    property int boardLeft: (width - boardW) / 2
-    property int boardTop: 90
+    property int gridW: 8 * cell
+    property int gridH: 9 * cell
+    property int boardMargin: 28
+    property int boardLeft: (width - gridW) / 2
+    property int boardTop: 96
 
     // ---------- 顶部控制栏 ----------
     Rectangle {
@@ -61,63 +70,103 @@ Window {
 
     // ---------- 棋盘底板 ----------
     Rectangle {
-        x: boardLeft - 18
-        y: boardTop - 18
-        width: boardW + 36
-        height: boardH + 36
+        x: boardLeft - boardMargin
+        y: boardTop - boardMargin
+        width: gridW + 2 * boardMargin
+        height: gridH + 2 * boardMargin
         color: "#e6c987"
         border { color: "#8b5a2b"; width: 5 }
         radius: 10
 
-        // 棋盘线
-        Canvas {
-            anchors { fill: parent; margins: 18 }
-            onPaint: {
-                const ctx = getContext("2d");
-                ctx.reset();
-                const w = boardW, h = boardH;
-                ctx.strokeStyle = "#5a3a1a";
-                ctx.lineWidth = 1.5;
+        // 棋盘内容容器（内缩 margin：交叉点(0,0)位于 boardLeft/boardTop，棋子完整在底板内）
+        Rectangle {
+            id: boardInner
+            x: boardMargin
+            y: boardMargin
+            width: gridW
+            height: gridH
+            color: "transparent"
 
-                // 横线 10 条
-                for (let r = 0; r < 10; ++r) {
-                    ctx.beginPath();
-                    ctx.moveTo(0, r * cell);
-                    ctx.lineTo(w, r * cell);
-                    ctx.stroke();
-                }
-                // 竖线 9 条（河界处断开，两边边框保留）
-                for (let c = 0; c < 9; ++c) {
-                    ctx.beginPath();
-                    ctx.moveTo(c * cell, 0);
-                    ctx.lineTo(c * cell, 4 * cell);
-                    ctx.stroke();
-                    ctx.beginPath();
-                    ctx.moveTo(c * cell, 5 * cell);
-                    ctx.lineTo(c * cell, h);
-                    ctx.stroke();
-                    // 河界两侧边框
-                    if (c === 0 || c === 8) {
-                        ctx.beginPath();
-                        ctx.moveTo(c * cell, 4 * cell);
-                        ctx.lineTo(c * cell, 5 * cell);
-                        ctx.stroke();
-                    }
-                }
-                // 河界文字
-                ctx.fillStyle = "#5a3a1a";
-                ctx.font = "28px serif";
-                ctx.textAlign = "center";
-                ctx.fillText("楚 河 · 汉 界", w / 2, 4.6 * cell);
-
-                // 九宫斜线（红方下，黑方上）
-                ctx.beginPath();
-                ctx.moveTo(3 * cell, 0); ctx.lineTo(5 * cell, 2 * cell);
-                ctx.moveTo(5 * cell, 0); ctx.lineTo(3 * cell, 2 * cell);
-                ctx.moveTo(3 * cell, 7 * cell); ctx.lineTo(5 * cell, 9 * cell);
-                ctx.moveTo(5 * cell, 7 * cell); ctx.lineTo(3 * cell, 9 * cell);
-                ctx.stroke();
+        // 棋盘线（纯 QML，确定性渲染）
+        // 横线 10 条
+        Repeater {
+            model: 10
+            Rectangle {
+                required property int index
+                x: 0
+                y: index * cell
+                width: gridW
+                height: 1.5
+                color: "#5a3a1a"
             }
+        }
+        // 竖线上段（0-4 行）
+        Repeater {
+            model: 9
+            Rectangle {
+                required property int index
+                x: index * cell
+                y: 0
+                width: 1.5
+                height: 4 * cell
+                color: "#5a3a1a"
+            }
+        }
+        // 竖线下段（5-9 行）
+        Repeater {
+            model: 9
+            Rectangle {
+                required property int index
+                x: index * cell
+                y: 5 * cell
+                width: 1.5
+                height: 4 * cell
+                color: "#5a3a1a"
+            }
+        }
+        // 河界两侧边框（第 1/9 列）
+        Rectangle { x: 0; y: 4 * cell; width: 1.5; height: cell; color: "#5a3a1a" }
+        Rectangle { x: 8 * cell; y: 4 * cell; width: 1.5; height: cell; color: "#5a3a1a" }
+        // 九宫斜线（黑方上，红方下）
+        Rectangle {
+            x: 3 * cell; y: 0
+            width: Math.sqrt(2) * 2 * cell
+            height: 2
+            rotation: 45
+            transformOrigin: Item.TopLeft
+            color: "#5a3a1a"
+        }
+        Rectangle {
+            x: 5 * cell; y: 0
+            width: Math.sqrt(2) * 2 * cell
+            height: 2
+            rotation: -45
+            transformOrigin: Item.TopLeft
+            color: "#5a3a1a"
+        }
+        Rectangle {
+            x: 3 * cell; y: 7 * cell
+            width: Math.sqrt(2) * 2 * cell
+            height: 2
+            rotation: 45
+            transformOrigin: Item.TopLeft
+            color: "#5a3a1a"
+        }
+        Rectangle {
+            x: 5 * cell; y: 7 * cell
+            width: Math.sqrt(2) * 2 * cell
+            height: 2
+            rotation: -45
+            transformOrigin: Item.TopLeft
+            color: "#5a3a1a"
+        }
+        // 河界文字
+        Text {
+            text: "楚 河 · 汉 界"
+            color: "#5a3a1a"
+            font { pixelSize: 28; family: "serif" }
+            anchors.horizontalCenter: parent.horizontalCenter
+            y: 4.6 * cell - 14
         }
 
         // 棋子层
@@ -131,69 +180,76 @@ Window {
                 y: gridRow * cell
                 width: cell
                 height: cell
+                color: "transparent"
 
-                // 棋子
+                // 棋子（中心在交叉点：格子左上角）
                 Rectangle {
-                    anchors.centerIn: parent
+                    id: piece
+                    property string pieceChar: (controller.version, controller.pieceAt(gridRow, gridCol))
+                    x: -width / 2
+                    y: -height / 2
                     width: cell - 14
                     height: cell - 14
                     radius: width / 2
-                    visible: controller.pieceAt(gridRow, gridCol) !== ""
-                    color: {
-                        // 简化：红方亮色底、黑方暗色底（通过文字区分）
-                        return "#f5ead0"
-                    }
+                    visible: pieceChar !== ""
+                    color: ["将","士","象","馬","車","砲","卒"].indexOf(pieceChar) >= 0
+                            ? "#3a3028" : "#f5ead0"
                     border { width: 2; color: "#5a3a1a" }
-
-                    // 选中高亮
-                    Rectangle {
-                        anchors.fill: parent
-                        radius: parent.radius
-                        color: "transparent"
-                        border { width: 3; color: "#f6c445" }
-                        visible: controller.isSelected(gridRow, gridCol)
-                    }
-                    // 合法目标标记
-                    Rectangle {
-                        anchors.centerIn: parent
-                        width: parent.width * 0.28
-                        height: width
-                        radius: width / 2
-                        color: "#e07b39"
-                        opacity: 0.85
-                        visible: controller.isLegalTarget(gridRow, gridCol) &&
-                                 controller.pieceAt(gridRow, gridCol) === ""
-                    }
-                    Rectangle {
-                        anchors.centerIn: parent
-                        width: parent.width - 8
-                        height: parent.height - 8
-                        radius: width / 2
-                        color: "transparent"
-                        border { width: 3; color: "#e07b39" }
-                        opacity: 0.85
-                        visible: controller.isLegalTarget(gridRow, gridCol) &&
-                                 controller.pieceAt(gridRow, gridCol) !== ""
-                    }
 
                     Text {
                         anchors.centerIn: parent
-                        text: controller.pieceAt(gridRow, gridCol)
+                        text: piece.pieceChar
                         font { pixelSize: cell * 0.42; bold: true }
-                        color: {
-                            const ch = text.charCodeAt(0);
-                            // 黑方传统字（将士象馬車砲卒）用黑，红方用红
-                            return ["将","士","象","馬","車","砲","卒"].indexOf(text) >= 0
-                                   ? "#111111" : "#b32020"
-                        }
-                    }
-
-                    MouseArea {
-                        anchors.fill: parent
-                        onClicked: controller.onSquareClicked(gridRow, gridCol)
+                        color: ["将","士","象","馬","車","砲","卒"].indexOf(piece.pieceChar) >= 0
+                               ? "#f0e6d2" : "#b32020"
                     }
                 }
+
+                // 合法目标标记（空位，格子层）
+                Rectangle {
+                    x: -width / 2
+                    y: -height / 2
+                    width: cell * 0.28
+                    height: width
+                    radius: width / 2
+                    color: "#e07b39"
+                    opacity: 0.85
+                    visible: (controller.version, controller.isLegalTarget(gridRow, gridCol) && controller.pieceAt(gridRow, gridCol) === "")
+                }
+                // 合法目标标记（吃子，格子层）
+                Rectangle {
+                    x: -width / 2
+                    y: -height / 2
+                    width: cell - 8
+                    height: cell - 8
+                    radius: width / 2
+                    color: "transparent"
+                    border { width: 3; color: "#e07b39" }
+                    opacity: 0.85
+                    visible: (controller.version, controller.isLegalTarget(gridRow, gridCol) && controller.pieceAt(gridRow, gridCol) !== "")
+                }
+                // 选中高亮（格子层）
+                Rectangle {
+                    x: -width / 2
+                    y: -height / 2
+                    width: cell - 10
+                    height: cell - 10
+                    radius: width / 2
+                    color: "transparent"
+                    border { width: 3; color: "#f6c445" }
+                    visible: (controller.version, controller.isSelected(gridRow, gridCol))
+                }
+
+                // 点击区：中心在交叉点，56x56 小于格距 64，避免相邻格误命中
+                MouseArea {
+                    x: -28
+                    y: -28
+                    width: 56
+                    height: 56
+                    onClicked: controller.onSquareClicked(gridRow, gridCol)
+                }
             }
+        }
         }
     }
 
