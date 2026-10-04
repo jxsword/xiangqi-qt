@@ -9,6 +9,20 @@ find_package(Qt6 REQUIRED COMPONENTS Core Gui Qml Quick)
 
 qt_standard_project_setup()
 
+# macOS 专用：Xcode 16+ 的 macOS SDK 已移除 AGL.framework，而 Qt 6.8 的
+# Qt6::Gui / Qt6::OpenGL 接口链接库仍引用 "-framework AGL"，导致链接失败
+# （ld: framework 'AGL' not found）。Qt 6.8 在 macOS 上实际使用 Metal 渲染，
+# 不依赖 AGL 符号，安全剔除。
+if(APPLE)
+    foreach(_qt_agl_target Qt6::Gui Qt6::OpenGL)
+        get_target_property(_qt_agl_libs ${_qt_agl_target} INTERFACE_LINK_LIBRARIES)
+        if(_qt_agl_libs)
+            list(FILTER _qt_agl_libs EXCLUDE REGEX "AGL")
+            set_target_properties(${_qt_agl_target} PROPERTIES INTERFACE_LINK_LIBRARIES "${_qt_agl_libs}")
+        endif()
+    endforeach()
+endif()
+
 qt_add_executable(xiangqi-qt WIN32
     src/main.cpp
     src/board.h
