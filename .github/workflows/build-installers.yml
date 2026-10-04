@@ -1,7 +1,8 @@
 name: build-installers
 
-# 中国象棋（Qt 6 / C++ QML）三平台构建
-# 产物：Linux AppImage+deb、Windows NSIS 安装包、macOS dmg
+# 中国象棋（Qt 6 / C++ QML）发布构建
+# 产物：Linux AppImage + deb、Windows NSIS 安装包（macOS 后续版本再补）
+# 触发：打 v* tag 或手动触发；Qt 安装目录缓存加速（与 ci.yml 共享 key，可复用）
 on:
   push:
     tags:
@@ -16,9 +17,20 @@ env:
 jobs:
   # ============ Linux（deb + AppImage）============
   linux:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
+    env:
+      QT_DIR: /opt/qt
+      QT_ARCH: linux_gcc_64
+      QT_PREFIX: /opt/qt/6.8.3/gcc_64
     steps:
       - uses: actions/checkout@v4
+
+      - name: 缓存 Qt（命中则跳过安装）
+        id: cache-qt
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.QT_DIR }}
+          key: ${{ runner.os }}-qt-${{ env.QT_VERSION }}-${{ env.QT_ARCH }}
 
       - name: 安装构建依赖
         run: |
@@ -29,18 +41,24 @@ jobs:
             libfontconfig1-dev libfreetype6-dev libwayland-dev \
             libxcb-cursor0 file
 
-      - name: 安装 Qt ${{ env.QT_VERSION }}（aqtinstall）
+      - name: 安装 Qt（缓存未命中时才安装）
+        if: steps.cache-qt.outputs.cache-hit != 'true'
         run: |
           python3 -m pip install --upgrade pip aqtinstall
-          python3 -m aqt install-qt linux desktop ${QT_VERSION} linux_gcc_64 -O /opt/qt
-          echo "/opt/qt/${QT_VERSION}/gcc_64/bin" >> $GITHUB_PATH
+          python3 -m aqt install-qt linux desktop ${{ env.QT_VERSION }} ${{ env.QT_ARCH }} -O ${{ env.QT_DIR }}
 
       - name: 配置与构建
         run: |
           cmake -S . -B build -GNinja -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_PREFIX_PATH=/opt/qt/${QT_VERSION}/gcc_64
-          cmake --build build
+            -DCMAKE_PREFIX_PATH=${{ env.QT_PREFIX }}
+          cmake --build build -j $(nproc)
+
+      - name: 单元测试 + 冒烟测试
+        run: |
           ctest --test-dir build --output-on-failure
+          QT_QPA_PLATFORM=offscreen QT_QUICK_BACKEND=software timeout 10 ./build/${APP_NAME}
+          code=$?
+          [ $code -eq 124 ] && echo "SMOKE_OK" || { echo "SMOKE_FAIL($code)"; exit 1; }
 
       - name: 下载 linuxdeploy
         run: |
@@ -55,8 +73,7 @@ jobs:
           export APPIMAGE_EXTRACT_AND_RUN=1
           ./linuxdeploy --appdir AppDir --executable build/${APP_NAME} \
             --desktop-file tools/${APP_NAME}.desktop --icon-file tools/${APP_NAME}.png --plugin qt
-          cp /opt/qt/${QT_VERSION}/gcc_64/plugins/platforms/libqoffscreen.so AppDir/usr/plugins/platforms/ || true
-          cp -r build/Xiangqi AppDir/usr/bin/
+          cp ${{ env.QT_PREFIX }}/plugins/platforms/libqoffscreen.so AppDir/usr/plugins/platforms/ || true
           OUTPUT=${APP_NAME}_${APP_VERSION}_amd64.AppImage ./linuxdeploy-plugin-appimage --appdir AppDir
 
       - name: 生成 deb
@@ -88,34 +105,58 @@ jobs:
   # ============ Windows（NSIS，原生 MSVC）============
   windows:
     runs-on: windows-latest
+    env:
+      QT_DIR: C:/qt
+      QT_ARCH: win64_msvc2022_64
+      QT_PREFIX: C:/qt/6.8.3/msvc2022_64
     steps:
       - uses: actions/checkout@v4
 
-      - name: 安装 Qt ${{ env.QT_VERSION }}（aqtinstall）
+      - name: 缓存 Qt（命中则跳过安装）
+        id: cache-qt
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.QT_DIR }}
+          key: ${{ runner.os }}-qt-${{ env.QT_VERSION }}-${{ env.QT_ARCH }}
+
+      - name: 安装 Qt（缓存未命中时才安装）
+        if: steps.cache-qt.outputs.cache-hit != 'true'
         shell: bash
         run: |
           python -m pip install --upgrade pip aqtinstall
-          python -m aqt install-qt windows desktop ${QT_VERSION} win64_msvc2022_64 -O C:/qt
+          python -m aqt install-qt windows desktop ${{ env.QT_VERSION }} ${{ env.QT_ARCH }} -O ${{ env.QT_DIR }}
 
-      - name: 配置与构建（MSVC + Ninja）
-        shell: cmd
-        run: |
-          call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat"
-          cmake -S . -B build -GNinja -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH=C:/qt/${QT_VERSION}/msvc2022_64
-          cmake --build build
-
-      - name: 运行单元测试
+      - name: 配置与构建（Visual Studio 17 2022 生成器，免 vcvars）
         shell: bash
         run: |
-          ./build/test_rules.exe
+          cmake -S . -B build -G "Visual Studio 17 2022" -A x64 \
+            -DCMAKE_PREFIX_PATH=${{ env.QT_PREFIX }}
+          cmake --build build --config Release
+
+      - name: 单元测试 + 冒烟测试
+        shell: bash
+        run: |
+          ctest --test-dir build -C Release --output-on-failure
+
+      - name: 冒烟测试（offscreen）
+        shell: pwsh
+        run: |
+          $env:QT_QPA_PLATFORM = "offscreen"
+          $p = Start-Process -FilePath ".\build\Release\${env:APP_NAME}.exe" -PassThru
+          Start-Sleep -Seconds 6
+          if ($p.HasExited) {
+            Write-Error "SMOKE_FAIL：进程提前退出，exit=$($p.ExitCode)"
+            exit 1
+          }
+          Stop-Process -Id $p.Id -Force
+          Write-Host "SMOKE_OK"
 
       - name: windeployqt 部署
-        shell: cmd
+        shell: bash
         run: |
-          mkdir win-dist
-          copy build\xiangqi-qt.exe win-dist\
-          xcopy /e /i /y build\Xiangqi win-dist\Xiangqi
-          C:\qt\%QT_VERSION%\msvc2022_64\bin\windeployqt.exe --release --no-translations --dir win-dist win-dist\xiangqi-qt.exe
+          mkdir -p win-dist
+          cp build/Release/${APP_NAME}.exe win-dist/
+          ${{ env.QT_PREFIX }}/bin/windeployqt.exe --release --no-translations --dir win-dist win-dist/${APP_NAME}.exe
 
       - name: 安装 NSIS 并打包
         shell: bash
@@ -128,40 +169,3 @@ jobs:
         with:
           name: windows-installer
           path: xiangqi-qt_${{ env.APP_VERSION }}_x64-setup.exe
-
-  # ============ macOS（dmg）============
-  macos:
-    runs-on: macos-14
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: 安装 Qt ${{ env.QT_VERSION }}（aqtinstall）
-        run: |
-          python3 -m pip install --upgrade pip aqtinstall
-          python3 -m aqt install-qt mac desktop ${QT_VERSION} clang_64 -O /opt/qt
-
-      - name: 配置与构建
-        run: |
-          cmake -S . -B build -GNinja -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_PREFIX_PATH=/opt/qt/${QT_VERSION}/macos
-          cmake --build build
-          ctest --test-dir build --output-on-failure
-
-      - name: macdeployqt 部署
-        run: |
-          mkdir -p staging
-          cp -R build/xiangqi-qt.app staging/ 2>/dev/null || true
-          /opt/qt/${QT_VERSION}/macos/bin/macdeployqt build/xiangqi-qt.app \
-            -qmldir=$PWD/qml -always-overwrite
-          cp -R build/Xiangqi build/xiangqi-qt.app/Contents/MacOS/ || true
-
-      - name: 生成 dmg
-        run: |
-          mv build/xiangqi-qt.app "中国象棋.app"
-          hdiutil create -volname "中国象棋" -srcfolder "中国象棋.app" \
-            -ov -format UDZO xiangqi-qt_${APP_VERSION}_macos.dmg
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: macos-dmg
-          path: *.dmg

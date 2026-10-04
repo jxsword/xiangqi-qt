@@ -1,0 +1,137 @@
+name: ci
+
+# 中国象棋（Qt 6 / C++ QML）：Linux + Windows 构建与测试
+# 每次 push / PR 触发；Qt 安装目录缓存加速（actions/cache）
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  QT_VERSION: '6.8.3'
+
+jobs:
+  # ============ Linux 测试（Ubuntu 24.04 + aqt Qt 6.8.3）============
+  linux-test:
+    name: Linux 测试（Qt ${{ env.QT_VERSION }}）
+    runs-on: ubuntu-24.04
+    env:
+      QT_DIR: /opt/qt
+      QT_ARCH: linux_gcc_64
+      QT_PREFIX: /opt/qt/6.8.3/gcc_64
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 缓存 Qt（命中则跳过安装，加速构建）
+        id: cache-qt
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.QT_DIR }}
+          key: ${{ runner.os }}-qt-${{ env.QT_VERSION }}-${{ env.QT_ARCH }}
+
+      - name: 安装构建依赖
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            ninja-build cmake build-essential \
+            libgl1-mesa-dev libglu1-mesa-dev libxkbcommon-dev \
+            libfontconfig1-dev libfreetype6-dev libwayland-dev \
+            libxcb-cursor0 file
+
+      - name: 安装 Qt（缓存未命中时才安装）
+        if: steps.cache-qt.outputs.cache-hit != 'true'
+        run: |
+          python3 -m pip install --upgrade pip aqtinstall
+          python3 -m aqt install-qt linux desktop ${{ env.QT_VERSION }} ${{ env.QT_ARCH }} -O ${{ env.QT_DIR }}
+
+      - name: 配置与构建（Ninja）
+        run: |
+          cmake -S . -B build -GNinja -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_PREFIX_PATH=${{ env.QT_PREFIX }}
+          cmake --build build -j $(nproc)
+
+      - name: 单元测试（CTest 规则测试）
+        run: ctest --test-dir build --output-on-failure
+
+      - name: 冒烟测试（offscreen + 软件渲染，正常运行至超时即通过）
+        run: |
+          QT_QPA_PLATFORM=offscreen QT_QUICK_BACKEND=software timeout 10 ./build/xiangqi-qt
+          code=$?
+          if [ $code -eq 124 ]; then
+            echo "SMOKE_OK（程序正常运行至超时）"
+          else
+            echo "SMOKE_FAIL（exit=$code）"
+            exit 1
+          fi
+
+      - name: 上传测试产物（可选，调试用）
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-test-bin
+          path: build/xiangqi-qt
+          retention-days: 1
+
+  # ============ Windows 测试（windows-latest + MSVC + aqt Qt 6.8.3）============
+  windows-test:
+    name: Windows 测试（Qt ${{ env.QT_VERSION }}）
+    runs-on: windows-latest
+    env:
+      QT_DIR: C:/qt
+      QT_ARCH: win64_msvc2022_64
+      QT_PREFIX: C:/qt/6.8.3/msvc2022_64
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 缓存 Qt（命中则跳过安装，加速构建）
+        id: cache-qt
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.QT_DIR }}
+          key: ${{ runner.os }}-qt-${{ env.QT_VERSION }}-${{ env.QT_ARCH }}
+
+      - name: 安装 Qt（缓存未命中时才安装）
+        if: steps.cache-qt.outputs.cache-hit != 'true'
+        shell: bash
+        run: |
+          python -m pip install --upgrade pip aqtinstall
+          python -m aqt install-qt windows desktop ${{ env.QT_VERSION }} ${{ env.QT_ARCH }} -O ${{ env.QT_DIR }}
+
+      - name: 配置与构建（Visual Studio 17 2022 生成器，免 vcvars）
+        shell: bash
+        run: |
+          cmake -S . -B build -G "Visual Studio 17 2022" -A x64 \
+            -DCMAKE_PREFIX_PATH=${{ env.QT_PREFIX }}
+          cmake --build build --config Release
+
+      - name: 单元测试（CTest 规则测试）
+        shell: bash
+        run: ctest --test-dir build -C Release --output-on-failure
+
+      - name: 冒烟测试（offscreen，进程存活即通过）
+        shell: pwsh
+        run: |
+          $env:QT_QPA_PLATFORM = "offscreen"
+          $exe = ".\build\Release\xiangqi-qt.exe"
+          $p = Start-Process -FilePath $exe -PassThru
+          Start-Sleep -Seconds 6
+          if ($p.HasExited) {
+            Write-Error "SMOKE_FAIL：进程提前退出，exit=$($p.ExitCode)"
+            exit 1
+          }
+          Stop-Process -Id $p.Id -Force
+          Write-Host "SMOKE_OK（进程存活 6 秒，启动正常）"
+
+      - name: 上传测试产物（可选，调试用）
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-test-bin
+          path: build/Release/xiangqi-qt.exe
+          retention-days: 1
