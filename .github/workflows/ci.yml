@@ -149,7 +149,7 @@ jobs:
   # ============ macOS 测试（macos-latest + aqt Qt 6.8.3 macos_arm64）============
   macos-test:
     name: macOS 测试（Qt 6.8.3）
-    runs-on: macos-latest
+    runs-on: macos-15
     env:
       QT_DIR: /Users/runner/qt
       QT_ARCH: clang_64
@@ -205,7 +205,7 @@ jobs:
       - name: 冒烟测试（offscreen，进程存活即通过）
         run: |
           set +e
-          perl -e 'alarm 15; exec @ARGV' env QT_QPA_PLATFORM=offscreen ./build/xiangqi-qt
+          perl -e 'alarm 15; exec @ARGV' env QT_QPA_PLATFORM=offscreen QT_MAC_DISABLE_FOREGROUND_APPLICATION_TRANSFORM=1 ./build/xiangqi-qt
           code=$?
           set -e
           if [ $code -eq 142 ]; then
@@ -215,7 +215,7 @@ jobs:
           echo "SMOKE_FAIL（exit=$code）"
           echo "== lldb 崩溃栈 =="
           set +e
-          perl -e 'alarm 30; exec @ARGV' env QT_QPA_PLATFORM=offscreen lldb -b -o run -o "thread backtrace all" -o quit -- ./build/xiangqi-qt > /tmp/lldb_out.txt 2>&1
+          perl -e 'alarm 30; exec @ARGV' env QT_QPA_PLATFORM=offscreen QT_MAC_DISABLE_FOREGROUND_APPLICATION_TRANSFORM=1 lldb -b -o run -o "thread backtrace all" -o quit -- ./build/xiangqi-qt > /tmp/lldb_out.txt 2>&1
           echo "lldb exit=$?"
           set -e
           tail -100 /tmp/lldb_out.txt
