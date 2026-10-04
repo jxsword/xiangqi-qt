@@ -1,7 +1,8 @@
-# Qt 6.8.3 LTS（C++/QML）开发环境与 Windows 交叉编译搭建指南（Ubuntu 22.04）
+# Qt 6（C++/QML）开发环境与 Windows 交叉编译搭建指南（WSL Ubuntu 26.04，本机实测）
 
-> 本文档记录在 **Ubuntu 22.04 LTS** 上从零搭建 Qt 6.8（C++17 + QML/Qt Quick）开发环境、构建 Linux 安装包（deb / AppImage）、交叉编译并打包 Windows NSIS 安装包的完整过程。所有命令均在本机实际执行验证通过。
+> 本文档记录**本机实际环境**：WSL Ubuntu 26.04.1 LTS 下 Qt 6（C++17 + QML/Qt Quick）开发环境、Linux 构建运行、以及交叉编译 Windows x64 版并分发（zip 免安装）的完整过程。**所有命令均在 /home/ssy 下以普通用户执行验证通过**（本机 sudo 需密码不可用，全程走用户级安装）。
 > 适用工程：`xiangqi-qt`（中国象棋，纯 C++ 规则引擎 + AI + QML 界面）。
+> 交叉编译遇到的坑与解决方案速查：见 [cross_compiling_win_on_linux_faq.md](./cross_compiling_win_on_linux_faq.md)。
 
 ---
 
@@ -9,374 +10,380 @@
 
 | 事项 | 结论 |
 |---|---|
-| Qt 6.8.9 LTS | **开源渠道不存在**。Qt 6.8 系列开源版只发布到 **6.8.3**；6.8.4 及以后（含 6.8.9）仅商业授权渠道提供。开源用户应安装 **6.8.3 LTS** |
-| 安装方式 | 官方在线安装器需图形界面且要登录账号；无头/CI 环境统一用 **aqtinstall**（pip 包，命令行安装官方开源包） |
-| Linux 架构名 | `linux_gcc_64`（**不是** `gcc_64`，写错会报 qt_base 包解析错误） |
-| Windows 架构名 | `win64_mingw`（MinGW/UCRT）、`win64_msvc2022_64`（MSVC ABI） |
-| Windows 交叉编译器 | 不能用 winlibs 原生 Windows 编译器（PE 程序 Linux 无法执行）；Linux 上必须用 **LLVM-MinGW**（clang 目标为 mingw-w64）或 clang-cl+xwin |
-| C++ 标准库 ABI | Qt `win64_mingw` 的 DLL 用 GCC/libstdc++ 编译；LLVM-MinGW 默认 libc++（`std::__1`），**必须显式切到 libstdc++**，否则链接报 `QTimer::singleShotImpl(std::__1::chrono::...)` 未定义 |
-| QML 模块部署 | `qt_add_qml_module` 生成的 `build/<URI>/qmldir` 必须与可执行文件同目录分发，否则运行时报 `Module "Xiangqi" contains no type named "Main"` |
-| AppImage 工具 | 无 FUSE 的容器内必须 `export APPIMAGE_EXTRACT_AND_RUN=1` |
-| Qt6 xcb 插件 | 依赖 `libxcb-cursor0`（系统默认不装） |
+| Qt 6.8 LTS 开源版 | 开源渠道只发布到 **6.8.3**；6.8.4 及以后仅商业授权。本机交叉目标用 **6.8.3 win64_mingw** |
+| Qt 6.12.0 | **没有 Windows mingw 包**（aqt 查询架构报 checksum 下载失败）——Windows 交叉请勿用 6.12.0 |
+| Linux Qt | 本机为 Qt 官方在线安装器安装：`~/Qt/6.12.0/gcc_64`（主环境）+ `~/Qt/6.8.3/gcc_64`（交叉编译 host，**必须与目标同版本**） |
+| Windows Qt（交叉目标） | aqt 安装：`~/qtwin/6.8.3/mingw_64`（含 qml/plugins/lib/cmake 全套） |
+| Windows 交叉编译器 | **系统 apt 的 mingw-w64-posix**（`x86_64-w64-mingw32-g++-posix`，GCC 13.2）；Qt `win64_mingw` DLL 为 GCC/libstdc++ ABI，与系统 mingw 匹配 |
+| QML 模块加载 | **Windows 交叉版 `engine.loadFromModule("Xiangqi","Main")` 不可靠**（报 `contains no type named "Main"`），必须直接 `engine.load(QUrl("qrc:/qml/Main.qml"))`（AOT 缓存直命中） |
+| 控制台黑框 | exe 必须用 GUI 子系统：`qt_add_executable(... WIN32 ...)`；**不要手动链接 `Qt6::EntryPoint`**（该目标不存在），Qt6::Core 会在 `WIN32_EXECUTABLE` 为真时自动注入 `Qt6::EntryPointPrivate`（qtmain，WinMain→main） |
+| DLL 收集 | **交叉环境下 windeployqt 不可用**（Windows 版 exe Linux 跑不了）；统一用「全量拷贝 `bin/Qt6*.dll` + objdump 闭包验证」 |
+| 分发形态 | 本机实际用 **zip 免安装**（解压即用）；NSIS 安装包见附录（备选/CI） |
+| 系统版本 | WSL Ubuntu **26.04.1 LTS**；Python 3.14.4 / pip 25.1.1；CMake 4.4.3；Ninja 1.13.2 |
 
 ---
 
-## 1. 系统基础依赖
+## 1. 国内镜像加速（先配，下载快 10 倍以上）
+
+### 1.1 apt 换清华源
+
+本机已配置；新环境参考（Ubuntu 26.04）：
+
+```bash
+# 备份原源
+sudo cp /etc/apt/sources.list.d/ubuntu.sources /etc/apt/sources.list.d/ubuntu.sources.bak
+# 用清华镜像替换（URIs: http://mirrors.tuna.tsinghua.edu.cn/ubuntu/）
+# Ubuntu 24.04+ 使用 deb822 格式 /etc/apt/sources.list.d/ubuntu.sources
+sudo sed -i 's|http://archive.ubuntu.com/ubuntu/|http://mirrors.tuna.tsinghua.edu.cn/ubuntu/|g' \
+  /etc/apt/sources.list.d/ubuntu.sources
+sudo apt-get update
+```
+
+其他可选镜像：阿里云 `http://mirrors.aliyun.com/ubuntu/`、中科大 `http://mirrors.ustc.edu.cn/ubuntu/`。
+
+### 1.2 pip 用清华 PyPI
+
+```bash
+pip3 config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simple
+# 或单次使用：
+pip3 install --user --break-system-packages -i https://pypi.tuna.tsinghua.edu.cn/simple aqtinstall
+```
+
+### 1.3 aqt 下载 Qt 用清华 Qt 镜像
+
+```bash
+~/.local/bin/aqt install-qt --base https://mirrors.tuna.tsinghua.edu.cn/qt \
+  windows desktop 6.8.3 win64_mingw -O ~/qtwin
+```
+
+（`--base` 指向 Qt 官方仓库的镜像根；aqt 3.x 也支持 `-b`。）
+
+### 1.4 GitHub 下载加速（LLVM-MinGW 等，见附录时用）
+
+```bash
+wget https://ghproxy.com/https://github.com/mstorsjo/llvm-mingw/releases/download/<tag>/<file>
+# 或 gh-proxy 系镜像：https://mirror.ghproxy.com/、https://ghfast.top/
+```
+
+---
+
+## 2. 系统基础依赖（apt）
 
 ```bash
 sudo apt-get update
 sudo apt-get install -y \
-  build-essential cmake ninja-build git wget curl unzip file \
+  build-essential cmake ninja-build git wget curl unzip file zip \
   python3 python3-pip \
   libgl1-mesa-dev libglu1-mesa-dev libxkbcommon-dev \
   libfontconfig1-dev libfreetype6-dev libwayland-dev \
   libxcb-cursor0 \
+  g++-mingw-w64-x86-64-posix mingw-w64-x86-64-dev binutils-mingw-w64-x86-64 \
   nsis wine64 p7zip-full
 ```
 
 说明：
-- `ninja-build`：推荐的生成器（比 make 快）。
+- `ninja-build`：Windows 交叉构建的推荐生成器。
 - `libgl*/libxkbcommon/libfontconfig/libfreetype/libwayland`：Qt6 Gui/Quick 的构建与运行依赖。
-- `libxcb-cursor0`：Qt6 xcb 平台插件运行时依赖，不装则 linuxdeploy 报 `Could not find dependency: libxcb-cursor.so.0`。
-- `nsis`：Linux 原生 NSIS，可直接生成 Windows `.exe` 安装包（输出与平台无关）。
-- `wine64`：在 Linux 上运行 Qt 官方的 Windows 版 `windeployqt.exe` 收集 DLL。
+- `libxcb-cursor0`：Qt6 xcb 平台插件运行时依赖（系统默认不装）。
+- **`g++-mingw-w64-x86-64-posix` + `mingw-w64-x86-64-dev` + `binutils-mingw-w64-x86-64`**：Windows 交叉编译器与运行库（**本机实际使用的工具链**，非 LLVM-MinGW）。
+- `nsis`：备选生成 Windows NSIS 安装包（本机 zip 分发用不到，CI 备选）。
+- `wine64`：仅在「附录 A 的 windeployqt 路线」备选时使用（本机实际不用）。
+
+### 安装后验证
+
+```bash
+x86_64-w64-mingw32-g++-posix --version    # 应输出 GCC 13-posix
+x86_64-w64-mingw32-windres --version     # 资源编译器
+x86_64-w64-mingw32-objdump --version     # 依赖闭包分析工具
+cmake --version && ninja --version
+python3 --version && pip3 --version
+```
 
 ---
 
-## 2. 安装 Qt 6.8.3（aqtinstall）
+## 3. 安装 Qt
 
-### 2.1 安装 aqtinstall
+### 3.1 Linux 本机 Qt（主环境 + 交叉 host）
 
-```bash
-python3 -m pip install --upgrade pip
-python3 -m pip install aqtinstall
-# 验证
-aqt version
-```
+**方式 A（本机实际）**：Qt 官方在线安装器（`~/Qt/MaintenanceTool`）
+- 安装器图形界面安装 `6.12.0 gcc_64`（主）与 `6.8.3 gcc_64`（交叉 host，需与目标同版本）。
+- 结果：`~/Qt/6.12.0/gcc_64`、`~/Qt/6.8.3/gcc_64`。
 
-### 2.2 查询可用版本与架构（可选，用于核实）
+**方式 B（命令行，无图形界面）**：aqtinstall（与 3.2 同一套工具）
 
 ```bash
-# 列出 6.8 系列版本
-aqt list-qt linux desktop --spec "6.8"
-# 列出某版本的架构
-aqt list-qt linux desktop --arch 6.8.3
-aqt list-qt windows desktop --arch 6.8.3
+# 安装 aqt（已装：~/.local/bin/aqt，v3.3.0）
+pip3 install --user --break-system-packages -i https://pypi.tuna.tsinghua.edu.cn/simple aqtinstall
+
+# 安装 Linux 版（用户级，无需 sudo）
+~/.local/bin/aqt install-qt --base https://mirrors.tuna.tsinghua.edu.cn/qt \
+  linux desktop 6.8.3 linux_gcc_64 -O ~/Qt
 ```
 
-### 2.3 安装三套 Qt（Linux 本机 / Windows 目标 / Linux host 工具）
+### 3.2 Windows 目标 Qt（交叉编译用，aqt 安装）
 
 ```bash
-# Linux 本机开发与打包（约 1~2 GB，3~4 分钟）
-sudo mkdir -p /opt/qt && sudo chown -R $USER:$USER /opt/qt
-aqt install-qt linux desktop 6.8.3 linux_gcc_64 -O /opt/qt
-# 安装结果：/opt/qt/6.8.3/gcc_64（qmake、cmake 配置、lib、plugins、qml）
-
-# Windows MinGW 版（交叉编译目标，约 1 GB）
-sudo mkdir -p /opt/qtwin && sudo chown -R $USER:$USER /opt/qtwin
-aqt install-qt windows desktop 6.8.3 win64_mingw -O /opt/qtwin
-# 安装结果：/opt/qtwin/6.8.3/mingw_64（含 bin/windeployqt.exe）
-
-# （可选，MSVC ABI 路线才需要）
-# aqt install-qt windows desktop 6.8.3 win64_msvc2022_64 -O /opt/qtwin
+~/.local/bin/aqt install-qt --base https://mirrors.tuna.tsinghua.edu.cn/qt \
+  windows desktop 6.8.3 win64_mingw -O ~/qtwin
 ```
 
-> **QT_HOST_PATH 的作用**：交叉编译时 Qt CMake 要在 configure 阶段运行 QML import 扫描器（`qmlimportscanner`，是个**主机**可执行程序）。目标版 Qt（Windows）里的扫描器是 `.exe`，Linux 跑不了；需要再装一套**同版本 Linux Qt** 作为 host 工具链，configure 时传 `-DQT_HOST_PATH=/opt/qt/6.8.3/gcc_64`。
-> 注意 `qmlimportscanner` 位于 `libexec/`（不是 `bin/`），CMake 会自动查找。
+- 架构名必须为 **`win64_mingw`**（MinGW/UCRT ABI，与系统 mingw-posix 匹配）。
+- 安装结果：`~/qtwin/6.8.3/mingw_64`（qml/plugins/lib/cmake 全套，含 `lib/libQt6EntryPoint.a`）。
+
+### 安装后验证
+
+```bash
+~/Qt/6.8.3/gcc_64/bin/qmake -query QT_VERSION        # 6.8.3
+~/Qt/6.12.0/gcc_64/bin/qmake -query QT_VERSION       # 6.12.0
+ls ~/qtwin/6.8.3/mingw_64/bin/Qt6Core.dll            # Windows SDK 存在
+ls ~/qtwin/6.8.3/mingw_64/lib/cmake/Qt6Core/         # CMake 配置存在
+```
+
+> **QT_HOST_PATH 的作用**：交叉配置时 Qt CMake 要在 configure 阶段运行 `qmlimportscanner`（**主机**可执行程序）。目标版 Qt（Windows）里的扫描器是 `.exe`，Linux 跑不了，必须提供同版本 Linux Qt 作 host。本机 host = `~/Qt/6.8.3/gcc_64`（toolchain 里 `QT_HOST_PATH` 已写死）。
 
 ---
 
-## 3. 安装 Windows 交叉编译工具链（LLVM-MinGW + libstdc++）
+## 4. 交叉工具链
 
-Qt 的 `win64_mingw` 是 **UCRT + GCC/libstdc++ ABI**。我们在 Linux 上用 **LLVM-MinGW**（内含可在 Linux 运行的 clang，目标三元组 `x86_64-w64-mingw32`，自带 mingw-w64 UCRT 头库和 lld），再配一份 **winlibs 的 libstdc++ 头与运行时**以匹配 Qt 的 ABI。
+### 4.1 编译器（系统 apt mingw-posix）
 
-### 3.1 下载并解压 LLVM-MinGW（Ubuntu 22.04 x86_64，UCRT 版）
-
-发布页：<https://github.com/mstorsjo/llvm-mingw/releases>
-
-```bash
-# 以 20260922 版为例（请替换为最新 tag）
-cd /tmp
-wget https://github.com/mstorsjo/llvm-mingw/releases/download/20260922/\
-llvm-mingw-20260922-ucrt-ubuntu-22.04-x86_64.tar.xz
-sudo mkdir -p /opt/llvm-mingw && sudo chown $USER:$USER /opt/llvm-mingw
-tar -xf llvm-mingw-*-ucrt-ubuntu-22.04-x86_64.tar.xz -C /opt/llvm-mingw --strip-components=1
-# 验证（应输出 clang version xx）
-/opt/llvm-mingw/bin/x86_64-w64-mingw32-clang --version
-```
-
-### 3.2 下载 winlibs（仅取 libstdc++ 头库与运行时 DLL）
-
-> 为什么不直接用 winlibs 的编译器？winlibs 发行包里的 `gcc.exe/g++.exe` 是 **Windows PE 程序**，Linux 上无法执行（`Exec format error`）。我们只用它的 **libstdc++ 头文件、import 库和运行时 DLL**（这些是目标平台文件，与编译器宿主无关）。
-
-发布页：<https://github.com/brechtsanders/winlibs_mingw/releases>（选 **UCRT**、POSIX threads、SEH、x86_64 的 zip）
-
-```bash
-cd /tmp
-wget https://github.com/brechtsanders/winlibs_mingw/releases/download/\
-16.2.0posix-14.0.0-ucrt-r2/\
-winlibs-x86_64-posix-seh-gcc-16.2.0-mingw-w64ucrt-14.0.0-r2.zip
-sudo mkdir -p /opt/winlibs && sudo chown $USER:$USER /opt/winlibs
-unzip -q winlibs-*.zip -d /opt/winlibs
-# 结果：/opt/winlibs/mingw64/{include/c++/16.2.0, lib, bin}
-```
-
-把 libstdc++ 的 import 库单独放一个目录（避免 winlibs 全套库与 LLVM-MinGW 冲突）：
-
-```bash
-sudo mkdir -p /opt/stdcpp/lib && sudo chown -R $USER:$USER /opt/stdcpp
-cp /opt/winlibs/mingw64/lib/libstdc++.dll.a /opt/stdcpp/lib/
-# 头文件在编译时直接通过 -isystem 引用：
-#   /opt/winlibs/mingw64/include/c++/16.2.0
-#   /opt/winlibs/mingw64/include/c++/16.2.0/x86_64-w64-mingw32
-#   /opt/winlibs/mingw64/include/c++/16.2.0/backward
-```
-
-> **版本兼容性**：libstdc++ 保持向后 ABI 兼容。Qt 6.8.3 的 DLL 用 GCC 13.x 构建，用 GCC 16 的头编译应用、随包携带 GCC 16 的 `libstdc++-6.dll` 运行没有问题（新版运行时可承载旧版编译的库）。
-
-### 3.3 交叉编译 toolchain 文件
-
-工程内已提供 `cmake/mingw-llvm-toolchain.cmake`：
+工具链文件：`cmake/mingw-system-toolchain.cmake`（本机实际使用）：
 
 ```cmake
 set(CMAKE_SYSTEM_NAME Windows)
 set(CMAKE_SYSTEM_PROCESSOR x86_64)
 
-set(LLVM_MINGW "/opt/llvm-mingw")
-set(WINLIBS "/opt/winlibs/mingw64")
-set(QT_MINGW_ROOT "/opt/qtwin/6.8.3/mingw_64")
-set(GCC_VER "16.2.0")
+set(CMAKE_C_COMPILER x86_64-w64-mingw32-gcc-posix)
+set(CMAKE_CXX_COMPILER x86_64-w64-mingw32-g++-posix)
+set(CMAKE_RC_COMPILER x86_64-w64-mingw32-windres)
 
-set(CMAKE_C_COMPILER   "${LLVM_MINGW}/bin/x86_64-w64-mingw32-clang")
-set(CMAKE_CXX_COMPILER "${LLVM_MINGW}/bin/x86_64-w64-mingw32-clang++")
-set(CMAKE_RC_COMPILER  "${LLVM_MINGW}/bin/x86_64-w64-mingw32-windres")
+set(QT_MINGW_ROOT "$ENV{HOME}/qtwin/6.8.3/mingw_64")
+set(QT_HOST_PATH "$ENV{HOME}/Qt/6.8.3/gcc_64")
 
-# 关键：显式使用 libstdc++，并指向 winlibs 的 libstdc++ 头
-set(CMAKE_CXX_FLAGS "-stdlib=libstdc++ \
-  -isystem ${WINLIBS}/include/c++/${GCC_VER} \
-  -isystem ${WINLIBS}/include/c++/${GCC_VER}/x86_64-w64-mingw32 \
-  -isystem ${WINLIBS}/include/c++/${GCC_VER}/backward")
-# 链接期让链接器找到 libstdc++.dll.a
-set(CMAKE_EXE_LINKER_FLAGS "-L/opt/stdcpp/lib")
-set(CMAKE_SHARED_LINKER_FLAGS "-L/opt/stdcpp/lib")
-
-set(CMAKE_FIND_ROOT_PATH "${QT_MINGW_ROOT}" "${LLVM_MINGW}")
+set(CMAKE_FIND_ROOT_PATH
+    "${QT_MINGW_ROOT}"
+    "/usr/x86_64-w64-mingw32"
+    "/usr/lib/gcc/x86_64-w64-mingw32/13-posix")
 set(CMAKE_FIND_ROOT_PATH_MODE_PROGRAM NEVER)
 set(CMAKE_FIND_ROOT_PATH_MODE_LIBRARY ONLY)
 set(CMAKE_FIND_ROOT_PATH_MODE_INCLUDE ONLY)
 set(CMAKE_FIND_ROOT_PATH_MODE_PACKAGE ONLY)
-set(CMAKE_PREFIX_PATH "${QT_MINGW_ROOT}")
+```
+
+要点：
+- `QT_MINGW_ROOT`：Windows 版 Qt SDK（find_package 命中它）；`QT_HOST_PATH`：同版本 Linux Qt。
+- `FIND_ROOT_PATH_MODE_PACKAGE ONLY`：保证交叉包不被宿主机 Qt 污染。
+- MinGW 运行库（部署用）：`/usr/lib/gcc/x86_64-w64-mingw32/13-posix/{libgcc_s_seh-1.dll, libstdc++-6.dll}`、`/usr/x86_64-w64-mingw32/lib/libwinpthread-1.dll`。
+
+### 4.2 验证
+
+```bash
+cmake -B build-win -G Ninja \
+  -DCMAKE_TOOLCHAIN_FILE=$HOME/proj/xiangqi-qt/cmake/mingw-system-toolchain.cmake \
+  -DCMAKE_BUILD_TYPE=Release
+# 无报错、输出 "Build files have been written to ..." 即工具链正常
 ```
 
 ---
 
-## 4. Linux 本机构建
+## 5. Linux 本机构建与运行（WSL）
 
 ```bash
-cd xiangqi-qt
-export PATH=/opt/qt/6.8.3/gcc_64/bin:$PATH
-
-cmake -S . -B build -GNinja \
-  -DCMAKE_BUILD_TYPE=Release \
-  -DCMAKE_PREFIX_PATH=/opt/qt/6.8.3/gcc_64
-cmake --build build
-
-# 单元测试（规则引擎 7 项，已集成 CTest）
-ctest --test-dir build --output-on-failure
-# 产物：build/xiangqi-qt；QML 模块目录：build/Xiangqi/
+cd ~/proj/xiangqi-qt
+cmake -B build-linux -DCMAKE_BUILD_TYPE=Release      # 本机构建（Makefiles）
+cmake --build build-linux -j 8
 ```
 
-无头环境冒烟测试：
+- 产物：`build-linux/xiangqi-qt`（ELF x86-64，开发调试用，可直接运行）。
+- 单元测试（7 项规则测试，CTest 集成）：
 
 ```bash
-QT_QPA_PLATFORM=offscreen ./build/xiangqi-qt   # 能启动、无报错即正常
+ctest --test-dir build-linux --output-on-failure
+# 或：./build-linux/test_rules
+```
+
+- **运行（关键！必须软件渲染）**：
+
+```bash
+cd ~/proj/xiangqi-qt
+QT_QUICK_BACKEND=software ./build-linux/xiangqi-qt
+```
+
+> 不加 `QT_QUICK_BACKEND=software` 时，默认 D3D12 后端在 WSLg 下会 `D3D12: Removing Device.` 后**段错误（exit 139）闪退**。加该变量走软件渲染即可稳定运行。
+
+- 正式安装到自定义 prefix：
+
+```bash
+cmake --install build-linux --prefix ~/xiangqi-install
+# 安装结果：~/xiangqi-install/bin/xiangqi-qt
+QT_QUICK_BACKEND=software ~/xiangqi-install/bin/xiangqi-qt
 ```
 
 ---
 
-## 5. Linux 安装包（AppImage + deb）
-
-### 5.1 准备图标与 desktop 文件
-
-见 `tools/xiangqi-qt.png`（512×512）与 `tools/xiangqi-qt.desktop`：
-
-```ini
-[Desktop Entry]
-Name=中国象棋
-Exec=xiangqi-qt
-Icon=xiangqi-qt
-Type=Application
-Categories=Game;BoardGame;
-Terminal=false
-```
-
-### 5.2 下载 linuxdeploy 三件套
-
-```bash
-cd tools
-wget https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage -O linuxdeploy
-wget https://github.com/linuxdeploy/linuxdeploy-plugin-qt/releases/download/continuous/linuxdeploy-plugin-qt-x86_64.AppImage -O linuxdeploy-plugin-qt
-wget https://github.com/linuxdeploy/linuxdeploy-plugin-appimage/releases/download/continuous/linuxdeploy-plugin-appimage-x86_64.AppImage -O linuxdeploy-plugin-appimage
-chmod +x linuxdeploy linuxdeploy-plugin-qt linuxdeploy-plugin-appimage
-cd ..
-```
-
-### 5.3 生成 AppDir 与 AppImage
-
-```bash
-export PATH=/opt/qt/6.8.3/gcc_64/bin:$PATH
-export QML_SOURCES_PATHS=$PWD/qml          # 让 qt 插件扫描 QML 依赖
-export APPIMAGE_EXTRACT_AND_RUN=1          # 无 FUSE 环境必需
-
-./tools/linuxdeploy --appdir AppDir \
-  --executable build/xiangqi-qt \
-  --desktop-file tools/xiangqi-qt.desktop \
-  --icon-file tools/xiangqi-qt.png \
-  --plugin qt
-
-# 无头环境验证用的 offscreen 平台插件（真实桌面用 xcb，已默认包含）
-cp /opt/qt/6.8.3/gcc_64/plugins/platforms/libqoffscreen.so AppDir/usr/plugins/platforms/
-# 关键：把 qt_add_qml_module 生成的模块目录放到可执行文件旁
-cp -r build/Xiangqi AppDir/usr/bin/
-
-OUTPUT=xiangqi-qt_0.1.0_amd64.AppImage \
-  ./tools/linuxdeploy-plugin-appimage --appdir AppDir
-```
-
-### 5.4 生成 deb
-
-```bash
-mkdir -p debroot/DEBIAN
-cp -r AppDir/usr debroot/
-SIZE=$(du -sk debroot/usr | cut -f1)
-cat > debroot/DEBIAN/control <<EOF
-Package: xiangqi-qt
-Version: 0.1.0
-Section: games
-Priority: optional
-Architecture: amd64
-Maintainer: Xiangqi Dev <dev@local>
-Installed-Size: $SIZE
-Depends: libc6 (>= 2.34), libxcb-cursor0
-Description: 中国象棋（C++/QML 版）
- Chinese Chess built with Qt 6 Quick/QML, rule engine + AI.
-EOF
-dpkg-deb --build debroot xiangqi-qt_0.1.0_amd64.deb
-```
-
-> 若 `dpkg-deb` 偶发 `tar: file changed as we read it`，可删除 `debroot` 重新 `cp -r` 后再打包（文件系统时序问题，与内容无关）。
-
-验证：
-
-```bash
-dpkg-deb -I xiangqi-qt_0.1.0_amd64.deb      # 查看元信息
-mkdir /tmp/t && dpkg-deb -x xiangqi-qt_0.1.0_amd64.deb /tmp/t
-QT_QPA_PLATFORM=offscreen /tmp/t/usr/bin/xiangqi-qt
-```
-
----
-
-## 6. Windows 交叉编译与打包
+## 6. Windows 交叉编译与分发（zip 免安装）
 
 ### 6.1 交叉编译
 
 ```bash
-cd xiangqi-qt
-cmake -S . -B build-win -GNinja \
-  -DCMAKE_BUILD_TYPE=Release \
-  -DCMAKE_TOOLCHAIN_FILE=cmake/mingw-llvm-toolchain.cmake \
-  -DQT_HOST_PATH=/opt/qt/6.8.3/gcc_64
-cmake --build build-win
-# 产物：build-win/xiangqi-qt.exe（PE32+ x86-64）
-# QML 模块：build-win/Xiangqi/
+cd ~/proj/xiangqi-qt
+cmake -B build-win -G Ninja \
+  -DCMAKE_TOOLCHAIN_FILE=cmake/mingw-system-toolchain.cmake \
+  -DCMAKE_BUILD_TYPE=Release
+cmake --build build-win -j 8
 ```
 
-常见编译错误与处理：
-- `no member named 'abs' in namespace 'std'`：源码缺 `#include <cstdlib>`（GCC 间接包含、clang 严格），补上头文件即可。
-- `undefined symbol ... std::__1::chrono ...`：用了 libc++，检查 toolchain 是否加了 `-stdlib=libstdc++` 与 winlibs 头路径。
-
-### 6.2 准备发布目录并用 windeployqt 收集 Qt DLL
+- 产物：`build-win/xiangqi-qt.exe`（PE32+ **GUI** 子系统，x86-64）。
+- 验证子系统（应为 GUI，非 console）：
 
 ```bash
-mkdir -p win-dist
-cp build-win/xiangqi-qt.exe win-dist/
-cp -r build-win/Xiangqi win-dist/
-
-# 初始化 64 位 wine 前缀（首次）
-export WINEPREFIX=$HOME/.wine-xq WINEARCH=win64 WINEDEBUG=-all
-wineboot -i
-
-# 运行 Windows 版 windeployqt（经 wine）
-wine /opt/qtwin/6.8.3/mingw_64/bin/windeployqt.exe \
-  --release --no-translations --no-system-d3d-compiler \
-  --dir win-dist win-dist/xiangqi-qt.exe
+file build-win/xiangqi-qt.exe
+# PE32+ executable for MS Windows 5.02 (GUI), x86-64
 ```
 
-### 6.3 补齐 MinGW 运行时 DLL
+> GUI 子系统由 `CMakeLists.txt` 的 `qt_add_executable(xiangqi-qt WIN32 ...)` 实现；qtmain（`Qt6::EntryPointPrivate`）由 Qt6::Core 按 `WIN32_EXECUTABLE` 属性自动链接，**无需手动链接**。
+
+### 6.2 准备部署目录（deploy，可独立运行）
+
+交叉环境下 windeployqt 不可用，手工收集依赖：
 
 ```bash
-# libstdc++（来自 winlibs，GCC 16）
-cp /opt/winlibs/mingw64/bin/libstdc++-6.dll win-dist/
-# libunwind / libwinpthread（来自 LLVM-MinGW，x86_64）
-cp /opt/llvm-mingw/x86_64-w64-mingw32/bin/libunwind.dll \
-   /opt/llvm-mingw/x86_64-w64-mingw32/bin/libwinpthread-1.dll win-dist/
+cd ~/proj/xiangqi-qt
+D=build-win/deploy
+rm -rf $D && mkdir -p $D/{plugins/platforms,plugins/styles,qml}
+
+# 1) exe
+cp build-win/xiangqi-qt.exe $D/
+
+# 2) Qt DLL：全量拷贝（61 个，含传递依赖如 Qt6OpenGL/Qt6Sql）
+cp ~/qtwin/6.8.3/mingw_64/bin/Qt6*.dll $D/
+
+# 3) MinGW 运行库（GCC 13-posix）
+cp /usr/lib/gcc/x86_64-w64-mingw32/13-posix/libgcc_s_seh-1.dll $D/
+cp /usr/lib/gcc/x86_64-w64-mingw32/13-posix/libstdc++-6.dll $D/
+cp /usr/x86_64-w64-mingw32/lib/libwinpthread-1.dll $D/
+
+# 4) QML 模块（QtQuick 全风格、QtQml、Qt、QtCore、Assets、builtins.qmltypes 等）
+cp -r ~/qtwin/6.8.3/mingw_64/qml/* $D/qml/
+
+# 5) 平台插件 + 样式插件
+cp ~/qtwin/6.8.3/mingw_64/plugins/platforms/qwindows.dll $D/plugins/platforms/
+cp ~/qtwin/6.8.3/mingw_64/plugins/styles/qmodernwindowsstyle.dll $D/plugins/styles/
+
+# 6) qt.conf（插件与 QML 搜索路径）
+cat > $D/qt.conf <<'EOF'
+[Paths]
+Plugins=plugins
+QmlImports=qml
+Qml2Imports=qml
+EOF
 ```
 
-依赖闭包自检（应只剩 Windows 自带系统库，如 `KERNEL32/DWrite/UxTheme/bcrypt/msvcrt/api-ms-win-crt-*`）：
+**依赖闭包自检**（应只剩 Windows 系统自带库，如 `KERNEL32/USER32/GDI32/ole32/d3d11/dxgi/opengl32/winspool.drv` 等）：
 
 ```bash
-for f in $(find win-dist -name '*.dll') win-dist/xiangqi-qt.exe; do
-  /opt/llvm-mingw/bin/x86_64-w64-mingw32-objdump -p "$f" | grep 'DLL Name'
-done | sort -u
+cd build-win/deploy
+for dll in $(x86_64-w64-mingw32-objdump -p xiangqi-qt.exe | grep "DLL Name" | awk '{print $3}' \
+  | grep -vE "^(KERNEL32|msvcrt|USER32|GDI32|ADVAPI32|SHELL32|ole32|oleaut32|comdlg32|winmm|ws2_32|version|dwmapi|shcore|uxtheme|imm32|d3d11|d3d12|dxgi|opengl32|dnsapi|winspool.drv|api-ms-win-|ext-ms-win-)"); do
+  [ ! -f "$dll" ] && echo "MISSING: $dll"
+done
 ```
 
-最终 `win-dist/` 关键内容：
-- `xiangqi-qt.exe`
-- `Qt6Core.dll / Qt6Gui.dll / Qt6Qml.dll / Qt6Quick.dll / ...`
-- `platforms/qwindows.dll`、`qml/QtQuick/...`
-- `Xiangqi/qmldir`（+ `qml/Main.qml`、qmltypes）
-- `libstdc++-6.dll / libunwind.dll / libwinpthread-1.dll`
+> 全量拷贝 DLL 的原因（FAQ P4）：第一次只挑"直接依赖"导致缺 `Qt6OpenGL.dll`（Qt6Quick 渲染依赖）等传递依赖，实机双击闪退；全量拷贝后闭包验证 MISSING=0。
 
-### 6.4 NSIS 生成安装包
-
-`tools/installer.nsi`（注意：NSIS 的 `File` 相对路径基于 **.nsi 所在目录**，打包前把脚本复制到工程根目录）：
+### 6.3 打包与交付
 
 ```bash
-cp tools/installer.nsi ./installer.nsi
-makensis installer.nsi
-# 产物：xiangqi-qt_0.1.0_x64-setup.exe（约 31 MB）
+cd build-win/deploy && zip -qr ../xiangqi-qt-win-x64.zip .
+cp ../xiangqi-qt-win-x64.zip /mnt/c/Users/ysm/Downloads/
 ```
 
-安装脚本特性：安装到 `%PROGRAMFILES64%\XiangqiQt`、创建桌面与开始菜单快捷方式（中文名）、写入注册表卸载项、生成 `uninstall.exe`。
+Windows 侧：**删除旧解压目录 → 解压 zip → 双击 `xiangqi-qt.exe`**（免安装，GUI 子系统不弹控制台）。
 
 ---
 
-## 7. 关于 MSVC ABI 路线（备选，记录备查）
+## 7. 常见问题速查
 
-若必须链接 `win64_msvc2022_64`（MSVC ABI），Linux 上可用 **clang-cl + lld-link + xwin SDK**：
+| 现象 | 原因 | 解决 |
+|---|---|---|
+| Linux 运行段错误 exit 139 | WSLg D3D12 渲染崩溃 | `QT_QUICK_BACKEND=software` |
+| Windows 双击闪退 | 缺 Qt6OpenGL.dll 等传递依赖 | 全量拷贝 `bin/Qt6*.dll` + 闭包验证 |
+| `Module "Xiangqi" contains no type named "Main"` | 交叉版 loadFromModule 不可靠 | main.cpp 直接 `engine.load(QUrl("qrc:/qml/Main.qml"))` |
+| 双击先弹控制台黑框 | exe 是 console 子系统 | `qt_add_executable(... WIN32 ...)`；勿手动链 `Qt6::EntryPoint` |
+| `Qt6::EntryPoint ... target was not found` | 该目标不存在 | 目标名是 `Qt6::EntryPointPrivate`，由 Qt6::Core 自动注入，删掉手动链接 |
+| `CMake Error: generator Ninja does not match ...` | 对已有目录换生成器 | 已存在的目录用缓存生成器重新配置 |
+| `timeout` 导致脚本误判失败 | `timeout` 正常结束返回 124 | 脚本中先记录 `EXIT=$?` 再判断 |
+
+详细排查过程见 [cross_compiling_win_on_linux_faq.md](./cross_compiling_win_on_linux_faq.md)。
+
+---
+
+## 8. 磁盘占用参考
+
+| 组件 | 约占用 |
+|---|---|
+| Qt 6.12.0 Linux（~/Qt/6.12.0/gcc_64） | 1.2 GB |
+| Qt 6.8.3 Linux（~/Qt/6.8.3/gcc_64，交叉 host） | 1.1 GB |
+| Qt 6.8.3 Windows mingw（~/qtwin/6.8.3/mingw_64） | 1.1 GB |
+| 系统 mingw-w64（apt） | 数百 MB |
+| deploy 部署目录 | 约 116 MB |
+| 发布 zip | 约 43 MB |
+
+---
+
+## 附录 A（备选路线，本机环境不适用）：LLVM-MinGW + winlibs 交叉工具链
+
+> 保留自旧版指南（Ubuntu 22.04 + /opt 环境）。本机已改用系统 mingw-posix（第 4 节），以下仅供无系统 mingw 或需 clang 编译器的场景参考。对应 toolchain 文件：`cmake/mingw-llvm-toolchain.cmake`。
+
+1. 下载 LLVM-MinGW（Linux 宿主 x86_64，UCRT 版）：<https://github.com/mstorsjo/llvm-mingw/releases>，解压到 `/opt/llvm-mingw`；
+2. 下载 winlibs（仅取 libstdc++ 头库与运行时 DLL）：<https://github.com/brechtsanders/winlibs_mingw/releases>（UCRT + POSIX + SEH + x86_64），解压到 `/opt/winlibs`，将 `lib/libstdc++.dll.a` 复制到 `/opt/stdcpp/lib`；
+3. toolchain 关键点：编译器 `x86_64-w64-mingw32-clang`，`CMAKE_CXX_FLAGS` 加 `-stdlib=libstdc++` + winlibs 头路径（`-isystem /opt/winlibs/mingw64/include/c++/<ver>/...`），链接器 `-L/opt/stdcpp/lib`；
+4. 部署 DLL：`libstdc++-6.dll`（winlibs，GCC 16）+ `libunwind.dll`、`libwinpthread-1.dll`（LLVM-MinGW）。
+
+> 若走该路线且用 wine 跑 `windeployqt.exe`（旧版指南 6.2）：`wine /opt/qtwin/6.8.3/mingw_64/bin/windeployqt.exe --release --no-translations --dir win-dist win-dist/xiangqi-qt.exe`（需 `WINEPREFIX=$HOME/.wine-xq WINEARCH=win64`，首次 `wineboot -i`）。本机实际**不用** wine（直接全量拷贝 DLL，见 6.2）。
+
+## 附录 B（备选路线，记录备查）：MSVC ABI 交叉编译
+
+若必须链接 `win64_msvc2022_64`（MSVC ABI），Linux 上用 clang-cl + lld-link + xwin SDK：
 
 ```bash
-# LLVM 19+（xwin 新版 MSVC STL 头要求 Clang 19+，clang 14 会报 STL1000）
+# LLVM 19+（xwin 新版 MSVC STL 头要求 Clang 19+）
 wget https://apt.llvm.org/llvm.sh && sudo ./llvm.sh 19
 sudo ln -sf /usr/lib/llvm-19/bin/clang /usr/lib/llvm-19/bin/clang-cl
-# xwin 下载 Windows SDK + MSVC STL（约 1.2 GB）
 cargo install xwin
 xwin --accept-license splat --output $HOME/.xwin-cache
 ```
 
-toolchain 要点（工程内 `cmake/msvc-toolchain.cmake`）：
-- 编译器 `/usr/lib/llvm-19/bin/clang-cl`，链接器 `lld-link`，资源编译器 `llvm-rc`；
-- 头路径用 `-imsvc <xwin>/crt/include`、`-imsvc <xwin>/sdk/include/<ver>/{ucrt,um,shared}`；
-- 库路径用 `/LIBPATH:<xwin>/crt/lib/x86_64`、`/LIBPATH:<xwin>/sdk/lib/<ver>/{ucrt,um}/x86_64`；
-- CMake flags 中含空格的多值参数要用 `string(JOIN " " ...)` 拼接，**不要直接写分号列表**（分号会被 shell 当命令分隔符）；
-- 用 `export LIB='<path1>;<path2>'`（**分号**分隔，Windows 语义）覆盖编译器自检阶段的库搜索；
-- 该路线最终还需微软原版 VC 运行时 DLL（vcruntime140/msvcp140），在纯 Linux 下获取较繁琐，故**推荐默认走 MinGW + libstdc++ 路线**。
+toolchain 要点（工程内 `cmake/msvc-toolchain.cmake`）：`clang-cl` + `lld-link` + `llvm-rc`；头路径 `-imsvc <xwin>/crt/include`、`-imsvc <xwin>/sdk/include/<ver>/{ucrt,um,shared}`；库路径 `/LIBPATH:<xwin>/crt/lib/x86_64` 等。最终还需微软 VC 运行时 DLL（vcruntime140/msvcp140），纯 Linux 下获取繁琐，**默认推荐 MinGW 路线**。
 
----
+## 附录 C（备选，记录备查）：Linux AppImage / deb 打包
 
-## 8. Git 工作流
+保留自旧版指南，供需要 Linux 单文件/安装包分发时参考：
 
-工程遵循小步提交：
+```bash
+# linuxdeploy 三件套（Qt 插件 + AppImage 插件）
+cd tools
+wget https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage -O linuxdeploy
+wget https://github.com/linuxdeploy/linuxdeploy-plugin-qt/releases/download/continuous/linuxdeploy-plugin-qt-x86_64.AppImage -O linuxdeploy-plugin-qt
+wget https://github.com/linuxdeploy/linuxdeploy-plugin-appimage/releases/download/continuous/linuxdeploy-plugin-appimage-x86_64.AppImage -O linuxdeploy-plugin-appimage
+chmod +x linuxdeploy* && cd ..
+
+export PATH=~/Qt/6.8.3/gcc_64/bin:$PATH
+export QML_SOURCES_PATHS=$PWD/qml
+export APPIMAGE_EXTRACT_AND_RUN=1
+./tools/linuxdeploy --appdir AppDir --executable build-linux/xiangqi-qt \
+  --desktop-file tools/xiangqi-qt.desktop --icon-file tools/xiangqi-qt.png --plugin qt
+cp ~/Qt/6.8.3/gcc_64/plugins/platforms/libqoffscreen.so AppDir/usr/plugins/platforms/
+OUTPUT=xiangqi-qt_0.1.0_amd64.AppImage ./tools/linuxdeploy-plugin-appimage --appdir AppDir
+```
+
+deb：将 `AppDir/usr` 复制到 `debroot/usr`，写 `debroot/DEBIAN/control`（Package/Version/Architecture: amd64/Depends: libc6 (>= 2.34), libxcb-cursor0），`dpkg-deb --build debroot xiangqi-qt_0.1.0_amd64.deb`。
+
+## 附录 D（记录备查）：GitHub Actions 三平台 CI
+
+`.github/workflows/build-installers.yml`：打 `v*` tag 或手动触发，Linux（ubuntu-22.04，AppImage+deb）、Windows（windows-latest，MSVC 原生 + windeployqt + NSIS）、macOS（macos-14，dmg）。CI 上 Windows 用 runner 自带 MSVC + aqt 装 `win64_msvc2022_64`，无需交叉编译；Linux 的交叉工具链用于本地产出 Windows 包。
+
+## 附录 E：Git 小步提交示例
 
 ```
 chore: 项目骨架（CMake + Qt6 Quick/QML + gitignore）
@@ -385,6 +392,8 @@ feat(engine): AI（minimax + alpha-beta + 走法排序）
 feat(game): 对局控制器 + 入口（双人/人机/悔棋）
 feat(ui): QML 棋盘界面
 fix(board): 规则 bug 修复 + 单元测试（CTest，7 项全过）
+feat: 支持 Windows 交叉编译并沉淀 FAQ
+docs: README + 指南文档按本机实际环境修订
 ```
 
 规则测试也可不依赖 Qt 直接编译运行：
@@ -393,44 +402,3 @@ fix(board): 规则 bug 修复 + 单元测试（CTest，7 项全过）
 g++ -std=c++17 -I src tests/test_rules.cpp src/board.cpp src/engine.cpp -o /tmp/test_rules
 /tmp/test_rules
 ```
-
----
-
-## 9. GitHub Actions（三平台）
-
-工作流：`.github/workflows/build-installers.yml`，在打 `v*` tag 或手动触发时执行：
-
-| Job | Runner | 产物 |
-|---|---|---|
-| linux | ubuntu-22.04 | `*.AppImage`、`*.deb`（linuxdeploy + qt 插件） |
-| windows | windows-latest | `*_x64-setup.exe`（MSVC 原生构建 + windeployqt + NSIS） |
-| macos | macos-14 | `*_macos.dmg`（macdeployqt + hdiutil） |
-
-CI 上 Windows 直接用 GitHub runner 自带的 MSVC（`vcvars64.bat`）+ aqt 安装的 `win64_msvc2022_64`，无需交叉编译；Linux 的交叉编译工具链用于**本地**产出 Windows 包。
-
----
-
-## 10. 一键命令速查
-
-```bash
-# ---- Linux ----
-export PATH=/opt/qt/6.8.3/gcc_64/bin:$PATH
-cmake -S . -B build -GNinja -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH=/opt/qt/6.8.3/gcc_64
-cmake --build build && ctest --test-dir build --output-on-failure
-
-# ---- Windows 交叉编译 ----
-cmake -S . -B build-win -GNinja -DCMAKE_BUILD_TYPE=Release \
-  -DCMAKE_TOOLCHAIN_FILE=cmake/mingw-llvm-toolchain.cmake \
-  -DQT_HOST_PATH=/opt/qt/6.8.3/gcc_64
-cmake --build build-win
-```
-
-## 11. 磁盘占用参考
-
-| 组件 | 约占用 |
-|---|---|
-| Qt 6.8.3 Linux（/opt/qt） | 1.2 GB |
-| Qt 6.8.3 Windows mingw（/opt/qtwin） | 1.1 GB |
-| LLVM-MinGW（/opt/llvm-mingw） | 1.3 GB |
-| winlibs（/opt/winlibs，仅用其 libstdc++） | 1.8 GB（可只保留 include/c++ 与 bin 中 3 个 DLL，约 50 MB） |
-| xwin SDK（MSVC 备选路线） | 1.2 GB |
