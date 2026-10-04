@@ -221,21 +221,9 @@ jobs:
           ls -t ~/Library/Logs/DiagnosticReports/xiangqi-qt*.ips 2>/dev/null | head -3 || echo "无崩溃报告"
           REP=$(ls -t ~/Library/Logs/DiagnosticReports/xiangqi-qt*.ips 2>/dev/null | head -1)
           if [ -n "$REP" ]; then
-            python3 - "$REP" <<'PYEOF'
-import json, sys
-p = sys.argv[1]
-try:
-    d = json.load(open(p))
-    print("signal:", d.get("exception", {}).get("signal"), "| name:", d.get("exception", {}).get("name"))
-    imgs = d.get("usedImages", [])
-    for t0 in d.get("threads", []):
-        if t0.get("triggered"):
-            for f in t0.get("frames", [])[:20]:
-                img = imgs[f["imageIndex"]] if f.get("imageIndex") is not None and f["imageIndex"] < len(imgs) else {}
-                print(" ", img.get("name", "?"), f.get("symbol", ""), "+", f.get("imageOffset", 0))
-except Exception as e:
-    print("parse fail:", e)
-PYEOF
+            python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print("signal:",d.get("exception",{}).get("signal"),"name:",d.get("exception",{}).get("name")); imgs=d.get("usedImages",[]); [print(" ",(imgs[f["imageIndex"]].get("name","?") if f.get("imageIndex") is not None and f["imageIndex"]<len(imgs) else "?"),f.get("symbol",""),"+",f.get("imageOffset",0)) for t0 in d.get("threads",[]) if t0.get("triggered") for f in t0.get("frames",[])[:20]]' "$REP" || echo "解析失败，直接输出前 3000 字节："
+            head -c 3000 "$REP" || true
+            echo
           fi
           set -e
           exit 1
