@@ -19,7 +19,7 @@ env:
 jobs:
   # ============ Linux 测试（Ubuntu 24.04 + aqt Qt 6.8.3）============
   linux-test:
-    name: Linux 测试（Qt ${{ env.QT_VERSION }}）
+    name: Linux 测试（Qt 6.8.3）
     runs-on: ubuntu-24.04
     env:
       QT_DIR: /opt/qt
@@ -80,7 +80,7 @@ jobs:
 
   # ============ Windows 测试（windows-latest + MSVC + aqt Qt 6.8.3）============
   windows-test:
-    name: Windows 测试（Qt ${{ env.QT_VERSION }}）
+    name: Windows 测试（Qt 6.8.3）
     runs-on: windows-latest
     env:
       QT_DIR: C:/qt
