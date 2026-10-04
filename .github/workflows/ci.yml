@@ -186,7 +186,7 @@ jobs:
           AGL="$HOME/agl/AGL.framework"
           mkdir -p "$AGL/Versions/A"
           printf 'int _agl_stub_dummy = 1;\n' > /tmp/agl_stub.c
-          cc -dynamiclib -Wl,-install_name,@rpath/AGL.framework/Versions/A/AGL \
+          cc -dynamiclib -Wl,-install_name,/Users/runner/agl/AGL.framework/Versions/A/AGL \
             -o "$AGL/Versions/A/AGL" /tmp/agl_stub.c
           cd "$AGL"
           ln -sfn A Versions/Current
